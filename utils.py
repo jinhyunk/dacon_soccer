@@ -26,19 +26,13 @@ def ensure_phase_column(df):
 
 class SoccerDataset(Dataset):
     def __init__(self, file_paths):
-        """
-        Args:
-            file_paths (list): 데이터 파일 경로 리스트 (train_files 등)
-        """
         self.file_paths = file_paths
         
-        # 정규화 상수 정의
+        # 정규화 상수
         self.MAX_X = 105.0
         self.MAX_Y = 68.0
-        self.MAX_TIME = 95 * 60.0  # 95분 * 60초 = 5700초
-        
-        # EOS Token 값 (정규화 범위 0~1 밖의 값 사용)
-        self.EOS_VALUE = -1.0
+        self.MAX_TIME = 95 * 60.0 # 5700초
+        self.EOS_VALUE = -1.0 # EOS 토큰 값
 
     def __len__(self):
         return len(self.file_paths)
@@ -48,79 +42,99 @@ class SoccerDataset(Dataset):
         try:
             df = pd.read_csv(file_path)
             
-            # Phase 컬럼 방어 코드 (혹시 없으면 생성)
-            # (이전에 만든 ensure_phase_column 함수가 있다고 가정하거나 여기에 직접 구현)
+            # 최소 2개 이상의 이벤트가 있어야 (과거 -> 미래) 예측 가능
+            if len(df) < 2:
+                return None
+            
+            # Phase 컬럼 방어 코드
             if 'phase' not in df.columns:
                  df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
 
             # --- 1. 정규화 (Normalization) ---
-            # 좌표는 0~1 사이로, 시간도 0~1 사이로 변환
-            # time_seconds 컬럼이 있다고 가정
-            x_norm = df['x'].values / self.MAX_X
-            y_norm = df['y'].values / self.MAX_Y
-            t_norm = df['time_seconds'].values / self.MAX_TIME
+            sx = df['start_x'].values / self.MAX_X
+            sy = df['start_y'].values / self.MAX_Y
+            ex = df['end_x'].values / self.MAX_X
+            ey = df['end_y'].values / self.MAX_Y
+            t  = df['time_seconds'].values / self.MAX_TIME
             
-            # Feature 합치기 (N, 3) -> [x, y, time]
-            # 필요하다면 여기에 action embedding을 위한 action index 등을 추가할 수 있음
-            features = np.stack([x_norm, y_norm, t_norm], axis=1)
+            # (N, 5) Feature Matrix
+            features = np.stack([sx, sy, ex, ey, t], axis=1)
             
-            # --- 2. Phase 별 분할 및 EOS 추가 ---
+            # --- 2. Input / Target 분리 ---
+            # Target: 에피소드의 '진짜' 마지막 이벤트의 도착 위치
+            target = features[-1, 2:4] # [end_x, end_y]
+            
+            # Input Data: 마지막 이벤트를 제외한 모든 데이터
+            input_features = features[:-1]
+            input_df = df.iloc[:-1].copy() # Phase 그룹화를 위해 DF도 자름
+            
+            # --- 3. Phase 별 분할 및 EOS 추가 (Input Data에 대해서만) ---
             phases_data = []
             
-            # df['phase'] 기준으로 그룹화
-            # np.unique 등을 써도 되지만, 순서를 유지하기 위해 dataframe groupby 활용
-            for _, group in df.groupby('phase', sort=False):
-                # 해당 phase의 feature 가져오기
+            # 자른 데이터(input_df) 기준으로 phase 그룹화
+            for _, group in input_df.groupby('phase', sort=False):
                 phase_indices = group.index
-                phase_feats = features[phase_indices] # (seq_len, 3)
                 
-                # EOS Token Row 생성 ([-1, -1, -1])
-                eos_row = np.full((1, phase_feats.shape[1]), self.EOS_VALUE)
+                # 해당 phase의 feature 가져오기 (인덱스 주의: iloc과 numpy 인덱싱 매칭)
+                # input_df는 0부터 다시 인덱싱 된게 아니라 원본 인덱스를 유지하거나,
+                # 가장 안전하게는 numpy array에서 직접 슬라이싱하는 것이 좋습니다.
+                # 여기서는 길이 기준으로 매칭하겠습니다.
                 
-                # 원본 데이터 뒤에 EOS 붙이기
+                # 현재 그룹의 상대적인 위치 파악이 복잡할 수 있으므로, 
+                # input_features를 직접 슬라이싱해서 가져오는 방식을 추천합니다.
+                # 하지만 간단하게 group.index가 0부터 시작하는 reset_index 상태라면 아래 방식이 맞습니다.
+                # 파일별로 읽으므로 df.index는 0, 1, 2... 순서입니다.
+                
+                phase_feats = input_features[group.index] # (Seq_Len, 5)
+                
+                # EOS Token Row 추가
+                eos_row = np.full((1, 5), self.EOS_VALUE)
                 phase_feats_with_eos = np.vstack([phase_feats, eos_row])
                 
-                # Tensor로 변환하여 리스트에 추가
                 phases_data.append(torch.FloatTensor(phase_feats_with_eos))
             
-            # 반환값: 이 Episode에 속한 Phase들의 리스트 (List of Tensors)
-            return phases_data
+            if not phases_data: # 입력 데이터가 비어버린 경우 (ex: 이벤트가 1개뿐이었을 때)
+                return None
+                
+            # 반환값: (Phase 리스트, Target 텐서)
+            return phases_data, torch.FloatTensor(target)
 
         except Exception as e:
             print(f"Error loading {file_path}: {e}")
-            return []
+            return None
         
 def hierarchical_collate_fn(batch):
     """
-    batch: [ episode1_phases, episode2_phases, ... ]
-      - episode1_phases: [phase1_tensor, phase2_tensor, ...]
+    Args:
+        batch: [(phases_list_1, target_1), (phases_list_2, target_2), ...]
     """
-    
-    # 1. 빈 데이터(로딩 에러 등) 필터링
-    batch = [item for item in batch if len(item) > 0]
-    
-    # 2. 계층 구조를 위한 정보 수집
-    all_phases = []          # 모든 phase 텐서를 일렬로 담을 리스트
-    episode_lengths = []     # 각 에피소드가 몇 개의 phase로 구성되었는지 (예: [3, 5, 2])
-    
-    for episode_phases in batch:
-        all_phases.extend(episode_phases)    # 리스트 확장
-        episode_lengths.append(len(episode_phases))
+    # 1. None 데이터 필터링
+    batch = [item for item in batch if item is not None]
+    if len(batch) == 0:
+        return None, None, None, None
         
-    # 3. Phase 단위 Padding (Phase LSTM 입력용)
-    # pad_sequence는 (Batch, Time, Feat) 형태를 만듦 (batch_first=True)
-    # 길이가 다른 phase들을 가장 긴 phase 길이에 맞춰 0으로 padding
-    # (이미 EOS 토큰이 끝에 있으므로 0 패딩과 구분 가능)
+    # Input(phases_list)과 Target 분리
+    batch_phases_lists, batch_targets = zip(*batch)
+    
+    # --- Target 처리 ---
+    targets = torch.stack(batch_targets) # (Batch_Size, 2)
+    
+    # --- Input 계층 구조 처리 ---
+    all_phases = []          # Flatten된 모든 Phase
+    episode_lengths = []     # 각 Episode가 몇 개의 Phase를 가지는지
+    
+    for phases_list in batch_phases_lists:
+        all_phases.extend(phases_list)
+        episode_lengths.append(len(phases_list))
+        
+    # Phase 단위 Padding (Phase LSTM 입력용)
+    # (Total_Phases, Max_Phase_Len, 5)
     padded_phases = pad_sequence(all_phases, batch_first=True, padding_value=0)
     
-    # 4. 각 Phase의 실제 길이 (Pack_padded_sequence 사용 시 필요)
+    # 각 Phase의 실제 길이 (EOS 포함)
     phase_lengths = torch.LongTensor([len(p) for p in all_phases])
     
-    # 5. Episode 구조 정보 Tensor 변환
+    # Episode 구조 정보
     episode_lengths = torch.LongTensor(episode_lengths)
     
-    return {
-        'padded_phases': padded_phases,   # (Total_Phases, Max_Seq_Len, 3) -> Phase LSTM Input
-        'phase_lengths': phase_lengths,   # (Total_Phases) -> 각 Phase의 실제 길이
-        'episode_lengths': episode_lengths # (Batch_Size) -> 각 에피소드의 Phase 개수
-    }
+    return padded_phases, phase_lengths, episode_lengths, targets
