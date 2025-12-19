@@ -1,0 +1,11 @@
+1294.6 throw in 
+interception
+clearance
+(recovery)
+pass / clearance?
+Duel
+Pass (unsuccessful)
+intercvention / interception
+clearance
+시간 순은 맞는데 
+마지막 1307에 마무리 carry 위치가 데이터 오류로 보임.

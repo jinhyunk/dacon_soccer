@@ -1,0 +1,12 @@
+name: soccer_cpu
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pandas
+  - scikit-learn
+  - numpy
+  - ipykernel
+  - pip
