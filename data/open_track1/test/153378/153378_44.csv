@@ -1,0 +1,4 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode
+153378,1,44,2650.567,2353,500573,1456,Throw-In,Successful,21.15414,68.0,25.023600000000002,62.1639884,True,153378_44
+153378,1,44,2651.333,2353,526923,1458,Pass,Successful,25.023600000000002,62.1639884,21.35154,65.69424240000001,True,153378_44
+153378,1,44,2652.333,2353,500573,1460,Pass,Successful,21.35154,65.69424240000001,,,True,153378_44

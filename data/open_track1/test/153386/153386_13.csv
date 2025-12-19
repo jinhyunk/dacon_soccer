@@ -1,0 +1,4 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode
+153386,1,13,1076.667,4640,222332,535,Goal Kick,Unsuccessful,5.3034135,25.616960000000006,60.38214,7.404996000000004,True,153386_13
+153386,1,13,1080.6,4644,250055,536,Recovery,,44.608515000000004,59.9437,58.167795,54.298,False,153386_13
+153386,1,13,1080.6,4644,250055,537,Pass,Unsuccessful,44.608515000000004,59.9437,,,False,153386_13
