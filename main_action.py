@@ -7,7 +7,7 @@ from model import *
 
 class Config:
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    BATCH_SIZE = 128        # 메모리 부족 시 64로 조절
+    BATCH_SIZE = 256        # 메모리 부족 시 64로 조절
     LR = 0.001
     EPOCHS = 50
     NUM_WORKERS = 4
