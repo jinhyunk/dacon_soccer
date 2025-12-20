@@ -61,8 +61,8 @@ def run_training():
     model = HierarchicalLSTM(
         input_size=Config.INPUT_SIZE,
         phase_hidden_size=Config.PHASE_HIDDEN,
-        episode_hidden=Config.EPISODE_HIDDEN,
-        dropout=Config.DROPOUT
+        episode_hidden_size=Config.EPISODE_HIDDEN, # 이름 수정 (episode_hidden -> episode_hidden_size)
+        dropout=Config.DROPOUT                     # Dropout 추가
     ).to(Config.DEVICE)
     
     optimizer = optim.Adam(model.parameters(), lr=Config.LR)
