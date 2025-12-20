@@ -47,11 +47,11 @@ def run_training():
     val_dataset = SoccerHierarchicalDataset(Config.VAL_DIR)
     
     train_loader = DataLoader(train_dataset, batch_size=Config.BATCH_SIZE, 
-                              shuffle=True, collate_fn=hierarchical_collate_fn, 
+                              shuffle=True, collate_fn=hierarchical_collate_fn2, 
                               num_workers=Config.NUM_WORKERS, pin_memory=True)
     
     val_loader = DataLoader(val_dataset, batch_size=Config.BATCH_SIZE, 
-                            shuffle=False, collate_fn=hierarchical_collate_fn, 
+                            shuffle=False, collate_fn=hierarchical_collate_fn2, 
                             num_workers=Config.NUM_WORKERS, pin_memory=True)
     
     print(f"   - Train Files: {len(train_dataset)}")
