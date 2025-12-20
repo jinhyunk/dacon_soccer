@@ -218,7 +218,17 @@ if __name__ == "__main__":
                             shuffle=False, collate_fn=action_aware_baseline_collate_fn, num_workers=4, pin_memory=True)
     
     # 모델 초기화 (RTX 3060용 설정)
-    model = ActionAwareBaselineLSTM().to(device)
+    model = ActionAwareBaselineLSTM(input_size=5, 
+                 hidden_size=256, 
+                 num_layers=3, 
+                 output_size=2, 
+                 dropout_rate=0.3,
+                 # --- 추가된 파라미터 ---
+                 num_actions=33,       # Action 종류 개수
+                 max_len=30,           # 길이 임베딩 최대값 (Baseline은 Sequence가 기므로 적절히 조절 필요, 여기선 phase와 맞춤)
+                 action_emb_dim=4,     # Action 임베딩 차원
+                 len_emb_dim=4         # Length 임베딩 차원
+                 ).to(device)
     
     optimizer = optim.Adam(model.parameters(), lr=LR)
     criterion = nn.MSELoss()

@@ -40,6 +40,86 @@ class BaselineLSTM(nn.Module):
         
         return prediction
     
+class ActionAwareBaselineLSTM(nn.Module):
+    def __init__(self, 
+                 input_size=5, 
+                 hidden_size=256, 
+                 num_layers=3, 
+                 output_size=2, 
+                 dropout_rate=0.3,
+                 # --- 추가된 파라미터 ---
+                 num_actions=33,       # Action 종류 개수
+                 max_len=30,           # 길이 임베딩 최대값 (Baseline은 Sequence가 기므로 적절히 조절 필요, 여기선 phase와 맞춤)
+                 action_emb_dim=4,     # Action 임베딩 차원
+                 len_emb_dim=4         # Length 임베딩 차원
+                 ):
+        super(ActionAwareBaselineLSTM, self).__init__()
+        
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        
+        # 1. Context Embeddings
+        self.action_embedding = nn.Embedding(num_actions, action_emb_dim)
+        self.length_embedding = nn.Embedding(max_len, len_emb_dim)
+        
+        # 2. LSTM Input Size 재계산
+        # 기존 5개 + Action임베딩(4) + Length임베딩(4) = 13
+        self.lstm_input_size = input_size + action_emb_dim + len_emb_dim
+        
+        # 3. LSTM Layer
+        self.lstm = nn.LSTM(self.lstm_input_size, hidden_size, num_layers, 
+                            batch_first=True, dropout=dropout_rate)
+        
+        # 4. Prediction Head (기존과 동일)
+        self.head = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(hidden_size // 2, output_size)
+        )
+
+    def forward(self, x, lengths, start_action_ids, len_ids):
+        """
+        Args:
+            x: (Batch, Seq_Len, 5)
+            lengths: (Batch)
+            start_action_ids: (Batch) - 각 에피소드의 시작 액션
+            len_ids: (Batch) - 각 에피소드의 길이 구간 인덱스
+        """
+        # ==========================================
+        # 1. Context Embedding & Concatenation
+        # ==========================================
+        # (Batch, Emb_Dim)
+        act_emb = self.action_embedding(start_action_ids)
+        l_emb = self.length_embedding(len_ids)
+        
+        # 두 임베딩 결합 -> Context Vector (Batch, Total_Emb_Dim)
+        context_vector = torch.cat([act_emb, l_emb], dim=1)
+        
+        # 시퀀스 길이만큼 복사 (Broadcasting)
+        # (Batch, 1, Total_Emb) -> (Batch, Seq_Len, Total_Emb)
+        seq_len = x.size(1)
+        context_expanded = context_vector.unsqueeze(1).expand(-1, seq_len, -1)
+        
+        # 입력 데이터와 결합
+        # (Batch, Seq, 5) + (Batch, Seq, 8) -> (Batch, Seq, 13)
+        lstm_input = torch.cat([x, context_expanded], dim=2)
+        
+        # ==========================================
+        # 2. LSTM Pass
+        # ==========================================
+        packed_input = pack_padded_sequence(lstm_input, lengths.cpu(), batch_first=True, enforce_sorted=False)
+        
+        packed_out, (h_n, c_n) = self.lstm(packed_input)
+        
+        last_hidden = h_n[-1] # (Batch, Hidden)
+        
+        # ==========================================
+        # 3. Prediction
+        # ==========================================
+        prediction = self.head(last_hidden)
+        
+        return prediction
 
 class HierarchicalLSTM(nn.Module):
     def __init__(self, input_size=5, phase_hidden_size=64, episode_hidden_size=128, output_size=2, dropout=0.0):
