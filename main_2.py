@@ -1,5 +1,5 @@
 import os 
-import tqdm 
+from tdqm import tqdm 
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from utils import * 
@@ -38,7 +38,7 @@ class Config:
 print(f"✅ 사용 장치: {Config.DEVICE}")
 if torch.cuda.is_available():
     print(f"   - GPU: {torch.cuda.get_device_name(0)}")
-    
+
 def run_training():
     os.makedirs(Config.WEIGHT_DIR, exist_ok=True)
     

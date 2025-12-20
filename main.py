@@ -60,7 +60,7 @@ def run_training():
     # 모델 초기화
     model = HierarchicalLSTM(
         input_size=Config.INPUT_SIZE,
-        phase_hidden=Config.PHASE_HIDDEN,
+        phase_hidden_size=Config.PHASE_HIDDEN,
         episode_hidden=Config.EPISODE_HIDDEN,
         dropout=Config.DROPOUT
     ).to(Config.DEVICE)
