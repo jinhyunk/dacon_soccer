@@ -21,6 +21,43 @@ MAX_X = 105.0
 MAX_Y = 68.0
 MAX_TIME = 5700.0
 
+ACTION_TO_IDX = {
+    'Aerial Clearance': 0,
+    'Block': 1,
+    'Carry': 2,
+    'Catch': 3,
+    'Clearance': 4,
+    'Cross': 5,
+    'Deflection': 6,
+    'Duel': 7,
+    'Error': 8,
+    'Foul': 9,
+    'Foul_Throw': 10,
+    'Goal': 11,
+    'Goal Kick': 12,
+    'Handball_Foul': 13,
+    'Hit': 14,
+    'Interception': 15,
+    'Intervention': 16,
+    'Offside': 17,
+    'Out': 18,
+    'Own Goal': 19,
+    'Parry': 20,
+    'Pass': 21,
+    'Pass_Corner': 22,
+    'Pass_Freekick': 23,
+    'Penalty Kick': 24,
+    'Recovery': 25,
+    'Shot': 26,
+    'Shot_Corner': 27,
+    'Shot_Freekick': 28,
+    'Tackle': 29,
+    'Take-On': 30,
+    'Throw-In': 31,
+    'Other': 32  # 매핑되지 않은 값이나 예외 처리를 위한 클래스
+}
+
+
 class SoccerActionAwareBaselineDataset(Dataset):
     def __init__(self, data_dir, action_map, max_len_embed=30):
         self.file_paths = glob.glob(os.path.join(data_dir, '*.csv'))
@@ -170,8 +207,8 @@ def train_and_validate(model, train_loader, val_loader, optimizer, criterion, ep
 # --- 5. 실행 ---
 if __name__ == "__main__":
     # 데이터 경로 확인 필요
-    train_dataset = SoccerActionAwareBaselineDataset('./data/train')
-    val_dataset = SoccerActionAwareBaselineDataset('./data/val')
+    train_dataset = SoccerActionAwareBaselineDataset('./data/train',ACTION_TO_IDX)
+    val_dataset = SoccerActionAwareBaselineDataset('./data/val',ACTION_TO_IDX)
     
     # 3060 GPU 사용 시 num_workers를 높여 데이터 로딩 병목 해결 (4~8 추천)
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, 
