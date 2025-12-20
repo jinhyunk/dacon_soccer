@@ -66,8 +66,9 @@ def ensure_phase_column(df):
     return df
 
 class SoccerDataset(Dataset):
-    def __init__(self, file_paths):
-        self.file_paths = file_paths
+    def __init__(self, data_dir):
+        # 수정됨: data_dir 경로를 받아 glob으로 파일 리스트 생성
+        self.file_paths = glob.glob(os.path.join(data_dir, '*.csv'))
         
         # 정규화 상수
         self.MAX_X = 105.0
@@ -83,7 +84,7 @@ class SoccerDataset(Dataset):
         try:
             df = pd.read_csv(file_path)
             
-            # 최소 2개 이상의 이벤트가 있어야 (과거 -> 미래) 예측 가능
+            # 최소 2개 이상의 이벤트가 있어야 예측 가능
             if len(df) < 2:
                 return None
             
@@ -107,26 +108,14 @@ class SoccerDataset(Dataset):
             
             # Input Data: 마지막 이벤트를 제외한 모든 데이터
             input_features = features[:-1]
-            input_df = df.iloc[:-1].copy() # Phase 그룹화를 위해 DF도 자름
+            input_df = df.iloc[:-1].copy()
             
-            # --- 3. Phase 별 분할 및 EOS 추가 (Input Data에 대해서만) ---
+            # --- 3. Phase 별 분할 및 EOS 추가 ---
             phases_data = []
             
-            # 자른 데이터(input_df) 기준으로 phase 그룹화
             for _, group in input_df.groupby('phase', sort=False):
-                phase_indices = group.index
-                
-                # 해당 phase의 feature 가져오기 (인덱스 주의: iloc과 numpy 인덱싱 매칭)
-                # input_df는 0부터 다시 인덱싱 된게 아니라 원본 인덱스를 유지하거나,
-                # 가장 안전하게는 numpy array에서 직접 슬라이싱하는 것이 좋습니다.
-                # 여기서는 길이 기준으로 매칭하겠습니다.
-                
-                # 현재 그룹의 상대적인 위치 파악이 복잡할 수 있으므로, 
-                # input_features를 직접 슬라이싱해서 가져오는 방식을 추천합니다.
-                # 하지만 간단하게 group.index가 0부터 시작하는 reset_index 상태라면 아래 방식이 맞습니다.
-                # 파일별로 읽으므로 df.index는 0, 1, 2... 순서입니다.
-                
-                phase_feats = input_features[group.index] # (Seq_Len, 5)
+                # 해당 phase의 feature 가져오기
+                phase_feats = input_features[group.index] 
                 
                 # EOS Token Row 추가
                 eos_row = np.full((1, 5), self.EOS_VALUE)
@@ -134,10 +123,10 @@ class SoccerDataset(Dataset):
                 
                 phases_data.append(torch.FloatTensor(phase_feats_with_eos))
             
-            if not phases_data: # 입력 데이터가 비어버린 경우 (ex: 이벤트가 1개뿐이었을 때)
+            if not phases_data:
                 return None
                 
-            # 반환값: (Phase 리스트, Target 텐서)
+            # 반환값: (Phase 리스트, Target 텐서) - 2개 반환
             return phases_data, torch.FloatTensor(target)
 
         except Exception as e:
@@ -146,36 +135,38 @@ class SoccerDataset(Dataset):
         
 def hierarchical_collate_fn(batch):
     """
-    Args:
-        batch: [(phases_list_1, target_1), (phases_list_2, target_2), ...]
+    SoccerDataset 전용 Collate Function
+    Input: [(phases_list, target), (phases_list, target), ...]
+    Output: padded_phases, phase_lengths, episode_lengths, targets (4개)
     """
     # 1. None 데이터 필터링
     batch = [item for item in batch if item is not None]
     if len(batch) == 0:
+        # main.py에서 None 처리를 할 수 있도록 빈 값 반환
         return None, None, None, None
         
-    # Input(phases_list)과 Target 분리
+    # 2. Input(phases_list)과 Target 분리 (2개 항목 Unpack)
     batch_phases_lists, batch_targets = zip(*batch)
     
     # --- Target 처리 ---
     targets = torch.stack(batch_targets) # (Batch_Size, 2)
     
     # --- Input 계층 구조 처리 ---
-    all_phases = []          # Flatten된 모든 Phase
-    episode_lengths = []     # 각 Episode가 몇 개의 Phase를 가지는지
+    all_phases = []          # Flatten된 모든 Phase를 담을 리스트
+    episode_lengths = []     # 각 Episode가 몇 개의 Phase를 가지는지 기록
     
     for phases_list in batch_phases_lists:
         all_phases.extend(phases_list)
         episode_lengths.append(len(phases_list))
         
-    # Phase 단위 Padding (Phase LSTM 입력용)
+    # 3. Phase 단위 Padding (Phase LSTM 입력용)
     # (Total_Phases, Max_Phase_Len, 5)
     padded_phases = pad_sequence(all_phases, batch_first=True, padding_value=0)
     
-    # 각 Phase의 실제 길이 (EOS 포함)
+    # 4. 각 Phase의 실제 길이 (EOS 포함)
     phase_lengths = torch.LongTensor([len(p) for p in all_phases])
     
-    # Episode 구조 정보
+    # 5. Episode 구조 정보 (각 에피소드의 페이즈 개수)
     episode_lengths = torch.LongTensor(episode_lengths)
     
     return padded_phases, phase_lengths, episode_lengths, targets
