@@ -1,0 +1,3 @@
+,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+0,153392,2,81,1504.3670000000002,4641,73228,2017,Recovery,,31.733205,55.863904,31.733205,55.863904,False,153392_81,153392_257
+1,153392,2,81,1502.8360000000002,4641,360162,2016,Clearance,,21.982380000000006,53.622896,31.733205,55.863904,False,153392_81,153392_257

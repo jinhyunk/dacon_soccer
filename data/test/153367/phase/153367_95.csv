@@ -1,0 +1,2 @@
+,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+0,153367,1,28,1806.0,4646,356597,783,Shot,Off Target,85.36206,25.559092,93.276435,27.247396,True,153367_28,153367_95

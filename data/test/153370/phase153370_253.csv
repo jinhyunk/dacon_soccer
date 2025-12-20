@@ -1,0 +1,2 @@
+,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+0,153370,2,76,2032.1670000000004,4220,354812,2538,Foul,Yellow_Card,67.36033499999999,55.41898,67.36033499999999,55.41898,True,153370_76,153370_253

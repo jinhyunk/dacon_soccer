@@ -1,0 +1,2 @@
+,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+0,153386,1,25,1812.9,4644,529335,949,Duel,Successful,46.39635,53.731968,46.39635,53.731968,False,153386_25,153386_70

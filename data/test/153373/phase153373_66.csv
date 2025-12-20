@@ -1,0 +1,2 @@
+,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+0,153373,1,25,1687.233,4648,145701,919,Error,,50.67048,54.23646,50.67048,54.23646,False,153373_25,153373_66

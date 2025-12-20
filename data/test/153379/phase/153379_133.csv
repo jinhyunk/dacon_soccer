@@ -1,0 +1,2 @@
+,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+0,153379,2,52,29.4670000000001,4648,250079,1310,Goal Kick,Unsuccessful,4.955769,32.310608,90.179355,36.554692,True,153379_52,153379_133

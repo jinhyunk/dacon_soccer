@@ -1,0 +1,2 @@
+,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+0,153392,2,81,1508.5,4657,412010,2023,Hit,,84.01848,20.656768,84.01848,20.656768,True,153392_81,153392_260

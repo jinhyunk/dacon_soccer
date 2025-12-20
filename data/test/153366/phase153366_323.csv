@@ -1,0 +1,3 @@
+,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+0,153366,1,9,469.4,2353,500558,257,Parry,,6.367179,38.596324,6.367179,38.596324,True,153366_9,153366_323
+1,153366,1,9,470.633,2353,500576,259,Clearance,,9.4660125,43.366456,22.068375000000003,26.852996000000005,True,153366_9,153366_323

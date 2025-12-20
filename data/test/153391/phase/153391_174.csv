@@ -1,0 +1,3 @@
+,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+0,153391,2,48,86.66699999999992,4646,109160,1513,Shot,Blocked,82.25847,50.937304,89.165055,44.505592,False,153391_48,153391_174
+1,153391,2,48,86.66699999999992,4646,109160,1512,Recovery,,82.25847,50.937304,89.165055,44.505592,False,153391_48,153391_174

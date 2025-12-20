@@ -1,0 +1,3 @@
+,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+0,153366,2,79,1966.5,2353,526908,2573,Recovery,,89.009865,23.049144,105.0,34.0,True,153366_79,153366_281
+1,153366,2,79,1966.5,2353,526908,2574,Shot,Low Quality Shot,89.009865,23.049144,105.0,34.0,True,153366_79,153366_281
