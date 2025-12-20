@@ -218,13 +218,7 @@ if __name__ == "__main__":
                             shuffle=False, collate_fn=action_aware_baseline_collate_fn, num_workers=4, pin_memory=True)
     
     # 모델 초기화 (RTX 3060용 설정)
-    model = BaselineLSTM(
-        input_size=5, 
-        hidden_size=256, 
-        num_layers=3, 
-        output_size=2, 
-        dropout_rate=0.3
-    ).to(device)
+    model = ActionAwareBaselineLSTM().to(device)
     
     optimizer = optim.Adam(model.parameters(), lr=LR)
     criterion = nn.MSELoss()
