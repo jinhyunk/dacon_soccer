@@ -160,7 +160,7 @@ def train_and_validate(model, train_loader, val_loader, optimizer, criterion, ep
         
         with torch.no_grad():
             for batch in tqdm(val_loader, desc="Validation"):
-                inputs, targets, lengths = batch
+                inputs, targets, lengths, start_acts, len_idxs = batch
                 if inputs is None: continue
                 
                 inputs = inputs.to(device)
