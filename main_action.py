@@ -26,9 +26,9 @@ class Config:
     
     # 모델 하이퍼파라미터
     INPUT_SIZE = 5          # [sx, sy, ex, ey, t]
-    PHASE_HIDDEN = 64
-    EPISODE_HIDDEN = 256
-    DROPOUT = 0.3
+    PHASE_HIDDEN = 32
+    EPISODE_HIDDEN = 128
+    DROPOUT = 0.0
     
     # 경로
     TRAIN_DIR = './data/train'

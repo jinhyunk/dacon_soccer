@@ -36,7 +36,7 @@ class Config:
     INPUT_SIZE = 5          # [sx, sy, ex, ey, t]
     PHASE_HIDDEN = 32
     EPISODE_HIDDEN = 128
-    DROPOUT = 0.4
+    DROPOUT = 0.0
     
     # 경로
     TRAIN_DIR = './data/train'
