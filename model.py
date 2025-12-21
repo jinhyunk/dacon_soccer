@@ -270,3 +270,112 @@ class ContextAwareHierarchicalLSTM(nn.Module):
         prediction = self.regressor(episode_representation)
         
         return prediction
+
+class Attention(nn.Module):
+    def __init__(self, hidden_size):
+        super(Attention, self).__init__()
+        # Attention Score를 계산하기 위한 가중치
+        self.attention = nn.Linear(hidden_size, 1)
+
+    def forward(self, lstm_output, lengths):
+        """
+        lstm_output: (Batch, Seq_Len, Hidden)
+        lengths: (Batch) - 각 시퀀스의 실제 길이
+        """
+        # 1. Score 계산: (Batch, Seq_Len, 1)
+        # 각 타임스텝의 Hidden State가 얼마나 중요한지 점수 매기기
+        scores = self.attention(lstm_output)
+        
+        # 2. Masking (Padding 부분 무시하기)
+        # 매우 작은 값(-1e9)을 넣어 Softmax 결과가 0이 되게 함
+        batch_size, seq_len, _ = scores.size()
+        mask = torch.arange(seq_len, device=scores.device).expand(batch_size, seq_len) < lengths.unsqueeze(1)
+        scores[~mask] = -1e9
+        
+        # 3. Attention Weights (Softmax)
+        attn_weights = F.softmax(scores, dim=1) # (Batch, Seq_Len, 1)
+        
+        # 4. Context Vector (Weighted Sum)
+        # 각 타임스텝의 출력에 가중치를 곱해서 더함
+        # (Batch, Seq, Hidden) * (Batch, Seq, 1) -> Sum -> (Batch, Hidden)
+        context_vector = torch.sum(lstm_output * attn_weights, dim=1)
+        
+        return context_vector, attn_weights
+
+class PhaseAttentionHierarchicalLSTM(nn.Module):
+    def __init__(self, 
+                 input_size=5, 
+                 phase_hidden=64, 
+                 episode_hidden=256, 
+                 output_size=2, 
+                 dropout=0.3,
+                 num_actions=33, 
+                 max_phase_len=30, 
+                 action_emb_dim=4, 
+                 len_emb_dim=4):
+        super(PhaseAttentionHierarchicalLSTM, self).__init__()
+        
+        # --- Context Embeddings (기존 유지) ---
+        self.action_embedding = nn.Embedding(num_actions, action_emb_dim)
+        self.length_embedding = nn.Embedding(max_phase_len, len_emb_dim)
+        
+        self.phase_input_dim = input_size + action_emb_dim + len_emb_dim
+        
+        # --- Phase Level (LSTM + Attention) ---
+        self.phase_lstm = nn.LSTM(self.phase_input_dim, phase_hidden, num_layers=1, batch_first=True)
+        self.phase_attention = Attention(phase_hidden) # Attention 모듈 추가
+        
+        # --- Episode Level (기존 유지) ---
+        self.episode_lstm = nn.LSTM(phase_hidden, episode_hidden, num_layers=2, 
+                                    batch_first=True, dropout=dropout)
+        
+        # --- Prediction Head ---
+        self.regressor = nn.Sequential(
+            nn.Linear(episode_hidden, episode_hidden // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(episode_hidden // 2, output_size)
+        )
+
+    def forward(self, padded_phases, phase_lengths, episode_lengths, start_action_ids, phase_len_ids):
+        # 1. Context Embedding & Concatenation
+        action_emb = self.action_embedding(start_action_ids)
+        len_emb = self.length_embedding(phase_len_ids)
+        context_vector = torch.cat([action_emb, len_emb], dim=1)
+        
+        seq_len = padded_phases.size(1)
+        context_expanded = context_vector.unsqueeze(1).expand(-1, seq_len, -1)
+        phase_inputs = torch.cat([padded_phases, context_expanded], dim=2)
+        
+        # 2. Phase LSTM Forward
+        # Pack -> LSTM -> Unpack 과정을 거쳐야 모든 시점의 output을 얻을 수 있음
+        packed_phases = pack_padded_sequence(phase_inputs, phase_lengths.cpu(), 
+                                             batch_first=True, enforce_sorted=False)
+        
+        # output: (Total_Phases, Seq_Len, Hidden) - Packed 상태
+        packed_output, _ = self.phase_lstm(packed_phases)
+        
+        # Unpack: 다시 텐서 형태로 복원 (Padding 포함)
+        # output shape: (Total_Phases, Max_Seq_Len, Phase_Hidden)
+        lstm_outputs, _ = pad_packed_sequence(packed_output, batch_first=True)
+        
+        # 3. Phase Attention (핵심 변경!)
+        # 마지막 Hidden State(h_n) 대신, Attention으로 요약된 벡터를 사용
+        # phase_embeddings shape: (Total_Phases, Phase_Hidden)
+        phase_embeddings, _ = self.phase_attention(lstm_outputs, phase_lengths)
+        
+        # 4. Episode Level Encoding
+        phases_per_episode = torch.split(phase_embeddings, episode_lengths.tolist())
+        padded_episodes = pad_sequence(phases_per_episode, batch_first=True, padding_value=0)
+        
+        packed_episodes = pack_padded_sequence(padded_episodes, episode_lengths.cpu(),
+                                               batch_first=True, enforce_sorted=False)
+        
+        # Episode 레벨은 마지막 예측이 중요하므로 기존대로 Last Hidden 사용
+        _, (episode_h_n, _) = self.episode_lstm(packed_episodes)
+        episode_representation = episode_h_n[-1]
+        
+        # 5. Prediction
+        prediction = self.regressor(episode_representation)
+        
+        return prediction
