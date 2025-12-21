@@ -384,3 +384,95 @@ class PhaseAttentionHierarchicalLSTM(nn.Module):
         prediction = self.regressor(episode_representation)
         
         return prediction
+    
+
+class CompleteHierarchicalLSTM(nn.Module):
+    def __init__(self, 
+                 input_size=5, 
+                 phase_hidden=64, 
+                 episode_hidden=256, 
+                 output_size=2, 
+                 dropout=0.3,
+                 num_actions=33, 
+                 action_emb_dim=4,  # 매 스텝 들어가는 임베딩 크기
+                 max_phase_len=30,
+                 len_emb_dim=4,
+                 domain_input_dim=3 # dx, dy, speed 등
+                 ):
+        super(CompleteHierarchicalLSTM, self).__init__()
+        
+        # 1. Embeddings
+        self.action_embedding = nn.Embedding(num_actions, action_emb_dim) # 매 스텝용
+        self.length_embedding = nn.Embedding(max_phase_len, len_emb_dim)  # Context용
+        
+        # 2. Phase LSTM Input
+        # 좌표(5) + 매 스텝 Action Embedding(4) + (선택: Length Embedding Context(4))
+        # *Length는 전체 길이라서 매 스텝 똑같이 붙여주는 Context 방식이 적합
+        self.phase_input_dim = input_size + action_emb_dim + len_emb_dim
+        
+        self.phase_lstm = nn.LSTM(self.phase_input_dim, phase_hidden, num_layers=1, batch_first=True)
+        
+        # 3. Episode LSTM Input
+        # Phase 요약(Hidden) + 도메인 지식(Domain Features)
+        self.episode_input_dim = phase_hidden + domain_input_dim
+        
+        self.episode_lstm = nn.LSTM(self.episode_input_dim, episode_hidden, num_layers=2, 
+                                    batch_first=True, dropout=dropout)
+        
+        self.regressor = nn.Sequential(
+            nn.Linear(episode_hidden, episode_hidden // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(episode_hidden // 2, output_size)
+        )
+
+    def forward(self, padded_phases, padded_actions, phase_lengths, episode_lengths, phase_len_ids, domain_features):
+        """
+        padded_phases: (Total_Phases, Seq, 5)
+        padded_actions: (Total_Phases, Seq) - [NEW] 매 스텝의 Action ID
+        domain_features: (Total_Phases, Domain_Dim)
+        """
+        # ==========================================
+        # 1. Phase Input Construction
+        # ==========================================
+        # (A) Action Embedding (Dynamic)
+        # (Total_Phases, Seq) -> (Total_Phases, Seq, Action_Emb)
+        action_emb = self.action_embedding(padded_actions)
+        
+        # (B) Length Context (Static) -> Broadcast
+        # (Total_Phases, Len_Emb)
+        len_emb = self.length_embedding(phase_len_ids)
+        # (Total_Phases, 1, Len_Emb) -> (Total_Phases, Seq, Len_Emb)
+        len_context = len_emb.unsqueeze(1).expand(-1, padded_phases.size(1), -1)
+        
+        # (C) Concatenate All
+        # [좌표, 액션임베딩, 길이컨텍스트]
+        phase_inputs = torch.cat([padded_phases, action_emb, len_context], dim=2)
+        
+        # ==========================================
+        # 2. Phase LSTM
+        # ==========================================
+        packed_phases = pack_padded_sequence(phase_inputs, phase_lengths.cpu(), 
+                                             batch_first=True, enforce_sorted=False)
+        _, (phase_h_n, _) = self.phase_lstm(packed_phases)
+        phase_embeddings = phase_h_n[-1] 
+        
+        # ==========================================
+        # 3. Episode Input Construction
+        # ==========================================
+        # [Phase 요약, 도메인 지식]
+        augmented_features = torch.cat([phase_embeddings, domain_features], dim=1)
+        
+        # ==========================================
+        # 4. Episode LSTM
+        # ==========================================
+        features_per_episode = torch.split(augmented_features, episode_lengths.tolist())
+        padded_episodes = pad_sequence(features_per_episode, batch_first=True, padding_value=0)
+        
+        packed_episodes = pack_padded_sequence(padded_episodes, episode_lengths.cpu(),
+                                               batch_first=True, enforce_sorted=False)
+        _, (episode_h_n, _) = self.episode_lstm(packed_episodes)
+        episode_representation = episode_h_n[-1]
+        
+        # Prediction
+        return self.regressor(episode_representation)
