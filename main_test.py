@@ -69,6 +69,11 @@ ACTION_TO_IDX = {
 # ==========================================
 
 # [Dataset 1] Pre-training용 (Phase 단위 Flat 데이터)
+# ==========================================
+# 2. Datasets (Fix: Index Out of Bounds)
+# ==========================================
+
+# [Dataset 1] Pre-training용
 class PhasePretrainDataset(Dataset):
     def __init__(self, data_dir):
         self.file_paths = glob.glob(os.path.join(data_dir, '*.csv'))
@@ -96,14 +101,17 @@ class PhasePretrainDataset(Dataset):
                     phase_data = features[group.index]
                     actions = [self.action_map.get(n, 32) for n in group['type_name']]
                     
-                    # Target: Phase의 끝 (end_x, end_y)
                     target = phase_data[-1, 2:4]
+                    
+                    # [수정됨] 30 -> Config.MAX_PHASE_LEN_EMBED - 1 (즉, 29)
+                    # 인덱스는 0부터 시작하므로 크기가 30이면 최대 인덱스는 29여야 함
+                    len_idx = min(len(group), Config.MAX_PHASE_LEN_EMBED - 1)
                     
                     self.all_phases.append({
                         'data': torch.FloatTensor(phase_data),
                         'actions': torch.LongTensor(actions),
                         'target': torch.FloatTensor(target),
-                        'len_id': min(len(group), 30)
+                        'len_id': len_idx 
                     })
             except: continue
             
@@ -111,6 +119,59 @@ class PhasePretrainDataset(Dataset):
     def __getitem__(self, idx):
         item = self.all_phases[idx]
         return item['data'], item['actions'], item['target'], item['len_id']
+
+# [Dataset 2] Fine-tuning용
+class SoccerCompleteDataset(Dataset):
+    def __init__(self, data_dir):
+        self.file_paths = glob.glob(os.path.join(data_dir, '*.csv'))
+        self.action_map = ACTION_TO_IDX
+    
+    def __len__(self): return len(self.file_paths)
+    
+    def __getitem__(self, idx):
+        try:
+            df = pd.read_csv(self.file_paths[idx])
+            if len(df) < 2: return None
+            if 'phase' not in df.columns:
+                 df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
+
+            sx = df['start_x'].values / Config.MAX_X
+            sy = df['start_y'].values / Config.MAX_Y
+            ex = df['end_x'].values / Config.MAX_X
+            ey = df['end_y'].values / Config.MAX_Y
+            t  = df['time_seconds'].values / Config.MAX_TIME
+            
+            features = np.stack([sx, sy, ex, ey, t], axis=1)
+            target = features[-1, 2:4]
+            
+            input_features = features[:-1]
+            input_df = df.iloc[:-1].copy()
+            
+            phases_data, phases_actions, phase_lens, domain_feats = [], [], [], []
+            
+            for _, group in input_df.groupby('phase', sort=False):
+                p_feats = input_features[group.index]
+                eos = np.full((1, 5), Config.EOS_VALUE)
+                phases_data.append(torch.FloatTensor(np.vstack([p_feats, eos])))
+                
+                act = [self.action_map.get(n, 32) for n in group['type_name']]
+                act.append(Config.EOS_ACTION_ID)
+                phases_actions.append(torch.LongTensor(act))
+                
+                # [수정됨] 여기도 안전하게 -1 적용
+                phase_lens.append(min(len(group), Config.MAX_PHASE_LEN_EMBED - 1))
+                
+                p_start_x, p_end_x = group.iloc[0]['start_x'], group.iloc[-1]['end_x']
+                dur = group.iloc[-1]['time_seconds'] - group.iloc[0]['time_seconds']
+                
+                dx = (p_end_x - p_start_x) / Config.MAX_X
+                norm_dur = dur / 30.0
+                domain_feats.append(np.array([dx, norm_dur]))
+                
+            if not phases_data: return None
+            return (phases_data, phases_actions, torch.FloatTensor(target), 
+                    phase_lens, torch.FloatTensor(np.array(domain_feats)))
+        except: return None
 
 def pretrain_collate_fn(batch):
     data, actions, targets, lens = zip(*batch)
@@ -151,20 +212,17 @@ class SoccerCompleteDataset(Dataset):
             phases_data, phases_actions, phase_lens, domain_feats = [], [], [], []
             
             for _, group in input_df.groupby('phase', sort=False):
-                # (A) Coords
                 p_feats = input_features[group.index]
                 eos = np.full((1, 5), Config.EOS_VALUE)
                 phases_data.append(torch.FloatTensor(np.vstack([p_feats, eos])))
                 
-                # (B) Actions
                 act = [self.action_map.get(n, 32) for n in group['type_name']]
                 act.append(Config.EOS_ACTION_ID)
                 phases_actions.append(torch.LongTensor(act))
                 
-                # (C) Context
+                # [수정됨] 여기도 안전하게 -1 적용
                 phase_lens.append(min(len(group), Config.MAX_PHASE_LEN_EMBED - 1))
                 
-                # (D) Domain (dx, duration)
                 p_start_x, p_end_x = group.iloc[0]['start_x'], group.iloc[-1]['end_x']
                 dur = group.iloc[-1]['time_seconds'] - group.iloc[0]['time_seconds']
                 
@@ -176,7 +234,7 @@ class SoccerCompleteDataset(Dataset):
             return (phases_data, phases_actions, torch.FloatTensor(target), 
                     phase_lens, torch.FloatTensor(np.array(domain_feats)))
         except: return None
-
+        
 def complete_collate_fn(batch):
     batch = [x for x in batch if x is not None]
     if not batch: return (None,)*7
