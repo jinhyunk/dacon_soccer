@@ -313,6 +313,29 @@ class CompleteHierarchicalLSTM(nn.Module):
 # 4. Execution Functions
 # ==========================================
 
+class RealDistanceLoss(nn.Module):
+    def __init__(self, max_x=105.0, max_y=68.0):
+        super(RealDistanceLoss, self).__init__()
+        self.max_x = max_x
+        self.max_y = max_y
+        self.epsilon = 1e-6 # 0으로 나누기 방지용
+
+    def forward(self, pred, target):
+        """
+        pred, target: (Batch, 2) - Normalized [0, 1]
+        """
+        # 1. 실제 미터 단위로 변환 (역정규화 아님, 차이만 계산)
+        diff_x = (pred[:, 0] - target[:, 0]) * self.max_x
+        diff_y = (pred[:, 1] - target[:, 1]) * self.max_y
+        
+        # 2. 유클리드 거리 계산 (Distance)
+        # sqrt(x^2 + y^2)
+        distance = torch.sqrt(diff_x**2 + diff_y**2 + self.epsilon)
+        
+        # 3. 평균 거리 반환 (Avg Distance)
+        return distance.mean()
+    
+
 def run_pretraining(model, train_loader):
     print("\n🚀 [Step 1] Starting Pre-training (Phase Encoder)...")
     
@@ -329,7 +352,7 @@ def run_pretraining(model, train_loader):
         list(temp_head.parameters()),
         lr=Config.PRETRAIN_LR
     )
-    criterion = nn.SmoothL1Loss()
+    criterion = RealDistanceLoss(max_x=Config.MAX_X, max_y=Config.MAX_Y)
     
     model.train()
     temp_head.train()
@@ -375,8 +398,8 @@ def run_finetuning(model, train_loader, val_loader):
     # 2. Optimizer (Only Unfrozen Parameters)
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), 
                            lr=Config.FINETUNE_LR, weight_decay=1e-5)
-    criterion = nn.SmoothL1Loss()
-    
+    criterion = RealDistanceLoss(max_x=Config.MAX_X, max_y=Config.MAX_Y)
+
     best_dist = float('inf')
     
     for epoch in range(Config.FINETUNE_EPOCHS):
