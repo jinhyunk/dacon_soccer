@@ -292,11 +292,11 @@ def run_training():
         
         print(f"   Train: {avg_train:.4f}m | Val: {avg_val:.4f}m")
         
-        if avg_val < best_dist_error:
-            best_dist_error = avg_val
-            save_name = f"location_aware_dist{best_dist_error:.4f}m.pth"
-            torch.save(model.state_dict(), os.path.join(Config.WEIGHT_DIR, save_name))
-            print(f"   💾 Best Model Saved: {save_name}")
+        # if avg_val < best_dist_error:
+        #     best_dist_error = avg_val
+        #     save_name = f"location_aware_dist{best_dist_error:.4f}m.pth"
+        #     torch.save(model.state_dict(), os.path.join(Config.WEIGHT_DIR, save_name))
+        #     print(f"   💾 Best Model Saved: {save_name}")
 
 if __name__ == "__main__":
     run_training()
