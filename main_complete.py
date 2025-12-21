@@ -51,37 +51,35 @@ if torch.cuda.is_available():
 # 2. Training Engine
 # ==========================================
 def run_training():
+    print(f"✅ 사용 장치: {Config.DEVICE}")
     os.makedirs(Config.WEIGHT_DIR, exist_ok=True)
     
-    print("📂 데이터 로드 중...")
-    # utils.py에 정의된 Complete 데이터셋 사용
-    train_dataset = SoccerCompleteDataset(Config.TRAIN_DIR)
-    val_dataset = SoccerCompleteDataset(Config.VAL_DIR)
+    print("📂 데이터 로드 중 (Light Version)...")
+    train_dataset = SoccerLightDataset(Config.TRAIN_DIR)
+    val_dataset = SoccerLightDataset(Config.VAL_DIR)
     
-    # utils.py에 정의된 complete_collate_fn 사용
     train_loader = DataLoader(train_dataset, batch_size=Config.BATCH_SIZE, 
-                              shuffle=True, collate_fn=complete_collate_fn, 
+                              shuffle=True, collate_fn=light_collate_fn, 
                               num_workers=Config.NUM_WORKERS, pin_memory=True)
     
     val_loader = DataLoader(val_dataset, batch_size=Config.BATCH_SIZE, 
-                            shuffle=False, collate_fn=complete_collate_fn, 
+                            shuffle=False, collate_fn=light_collate_fn, 
                             num_workers=Config.NUM_WORKERS, pin_memory=True)
     
     print(f"   - Train Files: {len(train_dataset)}")
-    print(f"   - Val Files: {len(val_dataset)}")
-
-    # 모델 초기화 (CompleteHierarchicalLSTM)
+    
+    # 모델 초기화 (경량화 파라미터 적용)
     model = CompleteHierarchicalLSTM(
         input_size=Config.INPUT_SIZE,
-        phase_hidden=Config.PHASE_HIDDEN,
-        episode_hidden=Config.EPISODE_HIDDEN,
+        phase_hidden=Config.PHASE_HIDDEN,     # 32
+        episode_hidden=Config.EPISODE_HIDDEN, # 128
         output_size=2,
         dropout=Config.DROPOUT,
         num_actions=Config.NUM_ACTIONS,
         action_emb_dim=Config.ACTION_EMB_DIM,
         max_phase_len=Config.MAX_PHASE_LEN_EMBED,
         len_emb_dim=Config.LEN_EMB_DIM,
-        domain_input_dim=Config.DOMAIN_INPUT_DIM  # [NEW]
+        domain_input_dim=Config.DOMAIN_INPUT_DIM # 2
     ).to(Config.DEVICE)
     
     optimizer = optim.Adam(model.parameters(), lr=Config.LR)
@@ -89,7 +87,6 @@ def run_training():
     
     best_dist_error = float('inf')
     
-    # --- Epoch Loop ---
     for epoch in range(Config.EPOCHS):
         print(f"\nTraining Epoch {epoch+1}/{Config.EPOCHS}")
         
@@ -98,23 +95,20 @@ def run_training():
         train_loss = 0.0
         
         for batch in tqdm(train_loader, desc="[Train]"):
-            # Unpack 7 Items (순서 중요: collate_fn 반환 순서와 일치)
             padded_phases, padded_actions, phase_lengths, episode_lengths, targets, phase_len_ids, domain_features = batch
             
             if padded_phases is None: continue
             
-            # Move to Device (모든 텐서를 GPU로 이동)
+            # GPU 이동
             padded_phases = padded_phases.to(Config.DEVICE)
-            padded_actions = padded_actions.to(Config.DEVICE) # [NEW]
+            padded_actions = padded_actions.to(Config.DEVICE)
             phase_lengths = phase_lengths.to(Config.DEVICE)
             episode_lengths = episode_lengths.to(Config.DEVICE)
             targets = targets.to(Config.DEVICE)
             phase_len_ids = phase_len_ids.to(Config.DEVICE)
-            domain_features = domain_features.to(Config.DEVICE) # [NEW]
+            domain_features = domain_features.to(Config.DEVICE)
             
             optimizer.zero_grad()
-            
-            # Forward (인자 순서 확인: model.forward 정의와 일치)
             preds = model(padded_phases, padded_actions, phase_lengths, episode_lengths, phase_len_ids, domain_features)
             
             loss = criterion(preds, targets)
@@ -137,7 +131,6 @@ def run_training():
                 
                 if padded_phases is None: continue
                 
-                # Move to Device
                 padded_phases = padded_phases.to(Config.DEVICE)
                 padded_actions = padded_actions.to(Config.DEVICE)
                 phase_lengths = phase_lengths.to(Config.DEVICE)
@@ -146,13 +139,11 @@ def run_training():
                 phase_len_ids = phase_len_ids.to(Config.DEVICE)
                 domain_features = domain_features.to(Config.DEVICE)
                 
-                # Forward
                 preds = model(padded_phases, padded_actions, phase_lengths, episode_lengths, phase_len_ids, domain_features)
                 
                 loss = criterion(preds, targets)
                 val_loss += loss.item()
                 
-                # 거리 오차 계산 (Meter)
                 pred_real_x = preds[:, 0] * Config.MAX_X
                 pred_real_y = preds[:, 1] * Config.MAX_Y
                 true_real_x = targets[:, 0] * Config.MAX_X
@@ -168,11 +159,10 @@ def run_training():
         print(f"   Results: Train Loss {avg_train_loss:.5f} | Val Loss {avg_val_loss:.5f}")
         print(f"   📏 Avg Distance Error: {avg_dist_error:.4f} meters")
         
-        # Best Model 저장
         # if avg_dist_error < best_dist_error:
         #     best_dist_error = avg_dist_error
-        #     # 파일명에 complete 명시
-        #     save_name = f"complete_hierarchical_lr{Config.LR}_dist{best_dist_error:.4f}m.pth"
+        #     # 파일명에 'light'를 명시하여 저장
+        #     save_name = f"light_hierarchical_lr{Config.LR}_dist{best_dist_error:.4f}m.pth"
         #     save_path = os.path.join(Config.WEIGHT_DIR, save_name)
         #     torch.save(model.state_dict(), save_path)
         #     print(f"   💾 Best Model Saved: {save_name}")
