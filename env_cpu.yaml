@@ -5,8 +5,16 @@ channels:
   - defaults
 dependencies:
   - python=3.11
-  - pandas
-  - scikit-learn
-  - numpy
-  - ipykernel
+  # conda로는 파이썬과 시스템 관련만 설치
   - pip
+  - pip:
+    # 라이브러리는 pip로 설치 (충돌 방지)
+    - numpy
+    - pandas
+    - scikit-learn
+    - tqdm
+    - ipykernel
+    # PyTorch CPU 버전 (pip로 받는 게 더 깔끔할 때가 많음)
+    - torch --index-url https://download.pytorch.org/whl/cpu
+    - torchvision --index-url https://download.pytorch.org/whl/cpu
+    - torchaudio --index-url https://download.pytorch.org/whl/cpu
