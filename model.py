@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
 
 class BaselineLSTM(nn.Module):
@@ -276,6 +277,7 @@ class Attention(nn.Module):
         super(Attention, self).__init__()
         # Attention Score를 계산하기 위한 가중치
         self.attention = nn.Linear(hidden_size, 1)
+        
 
     def forward(self, lstm_output, lengths):
         """
@@ -285,7 +287,10 @@ class Attention(nn.Module):
         # 1. Score 계산: (Batch, Seq_Len, 1)
         # 각 타임스텝의 Hidden State가 얼마나 중요한지 점수 매기기
         scores = self.attention(lstm_output)
-        
+
+        if lengths.device != scores.device:
+            lengths = lengths.to(scores.device)
+
         # 2. Masking (Padding 부분 무시하기)
         # 매우 작은 값(-1e9)을 넣어 Softmax 결과가 0이 되게 함
         batch_size, seq_len, _ = scores.size()
