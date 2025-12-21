@@ -20,19 +20,19 @@ class Config:
     EPOCHS = 50
     NUM_WORKERS = 0
     
-    # 데이터 정규화 상수
+    # 데이터 상수
     MAX_X = 105.0
     MAX_Y = 68.0
     MAX_TIME = 5700.0
     EOS_VALUE = 0.0 
     
-    # 임베딩 & 모델 파라미터
+    # 모델 파라미터
     NUM_ACTIONS = 33
     MAX_PHASE_LEN_EMBED = 30
     ACTION_EMB_DIM = 4
     LEN_EMB_DIM = 4
     
-    INPUT_SIZE = 5       # [sx, sy, dx, dy, t]
+    INPUT_SIZE = 5       # Phase LSTM Input
     PHASE_HIDDEN = 64
     EPISODE_HIDDEN = 256
     DROPOUT = 0.3        
@@ -53,7 +53,7 @@ ACTION_TO_IDX = {
 }
 
 # ==========================================
-# 1. Custom Loss
+# 1. Custom Loss (Real Distance)
 # ==========================================
 class RealDistanceLoss(nn.Module):
     def __init__(self, max_x=105.0, max_y=68.0):
@@ -69,9 +69,9 @@ class RealDistanceLoss(nn.Module):
         return distance.mean()
 
 # ==========================================
-# 2. Dataset (Local Residual Anchor)
+# 2. Dataset (Location Aware)
 # ==========================================
-class SoccerLocalResidualDataset(Dataset):
+class LocationAwareDataset(Dataset):
     def __init__(self, data_dir):
         self.file_paths = glob.glob(os.path.join(data_dir, '*.csv'))
         self.action_map = ACTION_TO_IDX
@@ -85,17 +85,18 @@ class SoccerLocalResidualDataset(Dataset):
             if 'phase' not in df.columns:
                  df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
 
-            # 1. 정규화
+            # 정규화
             sx = df['start_x'].values / Config.MAX_X
             sy = df['start_y'].values / Config.MAX_Y
             ex = df['end_x'].values / Config.MAX_X
             ey = df['end_y'].values / Config.MAX_Y
             t  = df['time_seconds'].values / Config.MAX_TIME
             
-            # 2. 상대 좌표 (Delta)
+            # 상대 좌표 (Delta)
             dx = ex - sx
             dy = ey - sy
             
+            # Phase Input Features
             features = np.stack([sx, sy, dx, dy, t], axis=1)
             target = np.array([ex[-1], ey[-1]]) 
             
@@ -103,9 +104,7 @@ class SoccerLocalResidualDataset(Dataset):
             input_df = df.iloc[:-1].copy()
             
             phases_data, start_actions, phase_lens = [], [], []
-            
-            # [핵심] 마지막 Phase의 시작 위치를 저장할 변수
-            last_phase_start_pos = np.array([0.5, 0.5]) # 기본값
+            phase_end_coords = [] # [NEW] 각 Phase가 끝난 위치 저장
             
             for _, group in input_df.groupby('phase', sort=False):
                 p_feats = input_features[group.index]
@@ -116,22 +115,21 @@ class SoccerLocalResidualDataset(Dataset):
                 start_actions.append(self.action_map.get(act_name, 32))
                 phase_lens.append(min(len(group), Config.MAX_PHASE_LEN_EMBED - 1))
                 
-                # [UPDATE] 현재 처리 중인 Phase의 시작 위치를 계속 업데이트
-                # 루프가 끝나면 자연스럽게 '마지막 Phase'의 시작 위치가 남음
-                cur_start_x = group.iloc[0]['start_x'] / Config.MAX_X
-                cur_start_y = group.iloc[0]['start_y'] / Config.MAX_Y
-                last_phase_start_pos = np.array([cur_start_x, cur_start_y])
+                # [NEW] 이 Phase의 마지막 종료 위치 (Normalized)
+                last_x = group.iloc[-1]['end_x'] / Config.MAX_X
+                last_y = group.iloc[-1]['end_y'] / Config.MAX_Y
+                phase_end_coords.append([last_x, last_y])
                 
             if not phases_data: return None
             
-            return (phases_data, torch.FloatTensor(target), start_actions, phase_lens, torch.FloatTensor(last_phase_start_pos))
+            return (phases_data, torch.FloatTensor(target), start_actions, phase_lens, torch.FloatTensor(phase_end_coords))
         except: return None
 
-def local_residual_collate_fn(batch):
+def location_aware_collate_fn(batch):
     batch = [x for x in batch if x is not None]
-    if not batch: return (None,)*7
+    if not batch: return (None,)*6
     
-    b_phases, b_targets, b_acts, b_lens, b_last_pos = zip(*batch)
+    b_phases, b_targets, b_acts, b_lens, b_coords = zip(*batch)
     
     all_phases, all_acts, all_lens_ids, ep_lens = [], [], [], []
     for i in range(len(b_phases)):
@@ -147,26 +145,32 @@ def local_residual_collate_fn(batch):
     start_action_ids = torch.LongTensor(all_acts)
     phase_len_ids = torch.LongTensor(all_lens_ids)
     
-    # [NEW] Last Phase Start Positions
-    last_phase_start_pos = torch.stack(b_last_pos)
+    # [NEW] Phase End Coords Padding (Batch, Max_Ep_Len, 2)
+    # Episode LSTM 입력용이므로 Episode 길이만큼 패딩해야 함
+    coords_list = [torch.FloatTensor(c) for c in b_coords]
+    padded_coords = pad_sequence(coords_list, batch_first=True, padding_value=0.0)
     
-    return pad_phases, phase_lengths, episode_lengths, targets, start_action_ids, phase_len_ids, last_phase_start_pos
+    return pad_phases, phase_lengths, episode_lengths, targets, start_action_ids, phase_len_ids, padded_coords
 
 # ==========================================
-# 3. Model
+# 3. Model (Location Aware Hierarchical LSTM)
 # ==========================================
-class ResidualHierarchicalLSTM(nn.Module):
+class LocationAwareHierarchicalLSTM(nn.Module):
     def __init__(self, input_size=5, phase_hidden=64, episode_hidden=256, output_size=2, dropout=0.3,
                  num_actions=33, max_phase_len=30, action_emb_dim=4, len_emb_dim=4):
-        super(ResidualHierarchicalLSTM, self).__init__()
+        super(LocationAwareHierarchicalLSTM, self).__init__()
         
         self.action_embedding = nn.Embedding(num_actions, action_emb_dim)
         self.length_embedding = nn.Embedding(max_phase_len, len_emb_dim)
         
+        # 1. Phase LSTM
         self.phase_input_dim = input_size + action_emb_dim + len_emb_dim
         self.phase_lstm = nn.LSTM(self.phase_input_dim, phase_hidden, num_layers=1, batch_first=True)
         
-        self.episode_lstm = nn.LSTM(phase_hidden, episode_hidden, num_layers=2, batch_first=True, dropout=dropout)
+        # 2. Episode LSTM (Input Size 증가!)
+        # 입력: [Phase_Summary(64) + Phase_End_Coord(2)]
+        self.episode_input_dim = phase_hidden + 2 
+        self.episode_lstm = nn.LSTM(self.episode_input_dim, episode_hidden, num_layers=2, batch_first=True, dropout=dropout)
         
         self.regressor = nn.Sequential(
             nn.Linear(episode_hidden, episode_hidden // 2),
@@ -175,8 +179,11 @@ class ResidualHierarchicalLSTM(nn.Module):
             nn.Linear(episode_hidden // 2, output_size)
         )
 
-    def forward(self, padded_phases, phase_lengths, episode_lengths, start_action_ids, phase_len_ids, last_phase_start_pos):
-        # 1. Context & Phase
+    def forward(self, padded_phases, phase_lengths, episode_lengths, start_action_ids, phase_len_ids, padded_coords):
+        """
+        padded_coords: (Batch, Max_Ep_Len, 2) - 각 Phase가 끝난 실제 좌표
+        """
+        # --- A. Phase Level ---
         action_emb = self.action_embedding(start_action_ids)
         len_emb = self.length_embedding(phase_len_ids)
         context_vector = torch.cat([action_emb, len_emb], dim=1)
@@ -187,42 +194,60 @@ class ResidualHierarchicalLSTM(nn.Module):
         
         packed_phases = pack_padded_sequence(phase_inputs, phase_lengths.cpu(), batch_first=True, enforce_sorted=False)
         _, (phase_h_n, _) = self.phase_lstm(packed_phases)
-        phase_embeddings = phase_h_n[-1] 
+        phase_embeddings = phase_h_n[-1] # (Total_Phases, Phase_Hidden)
         
-        # 2. Episode
+        # --- B. Episode Level Preparation ---
+        # 1. Phase Embedding을 Episode 단위로 다시 묶음
         phases_per_episode = torch.split(phase_embeddings, episode_lengths.tolist())
-        padded_episodes = pad_sequence(phases_per_episode, batch_first=True, padding_value=0)
+        padded_phase_embs = pad_sequence(phases_per_episode, batch_first=True, padding_value=0)
         
-        packed_episodes = pack_padded_sequence(padded_episodes, episode_lengths.cpu(), batch_first=True, enforce_sorted=False)
+        # 2. [핵심] Phase Summary + 실제 좌표 결합
+        # padded_phase_embs: (Batch, Ep_Len, 64)
+        # padded_coords:     (Batch, Ep_Len, 2)
+        # -> episode_inputs: (Batch, Ep_Len, 66)
+        episode_inputs = torch.cat([padded_phase_embs, padded_coords], dim=2)
+        
+        # --- C. Episode LSTM ---
+        packed_episodes = pack_padded_sequence(episode_inputs, episode_lengths.cpu(), batch_first=True, enforce_sorted=False)
         _, (episode_h_n, _) = self.episode_lstm(packed_episodes)
         
-        # 3. Residual Prediction (Local)
-        # 예측값 = "마지막 Phase 시작점" + "남은 이동량"
+        # --- D. Residual Prediction ---
+        # 모델은 "마지막 Phase가 끝난 지점"에서 "얼마나 더 가는지"를 예측
         predicted_remaining_delta = self.regressor(episode_h_n[-1])
-        final_prediction = last_phase_start_pos + predicted_remaining_delta
+        
+        # 마지막 Phase의 실제 끝 위치 추출 (Batch, 2)
+        # padded_coords에서 각 배치의 마지막 유효한 값 가져오기
+        batch_size = padded_coords.size(0)
+        last_coords = []
+        for i in range(batch_size):
+            length = episode_lengths[i]
+            last_coords.append(padded_coords[i, length-1, :])
+        last_known_pos = torch.stack(last_coords)
+        
+        final_prediction = last_known_pos + predicted_remaining_delta
         
         return final_prediction
 
 # ==========================================
-# 4. Training
+# 4. Training Engine
 # ==========================================
 def run_training():
     os.makedirs(Config.WEIGHT_DIR, exist_ok=True)
     print(f"✅ Device: {Config.DEVICE}")
-    print("📂 데이터 로드 중 (Local Residual)...")
+    print("📂 데이터 로드 중 (Location Aware)...")
     
-    train_dataset = SoccerLocalResidualDataset(Config.TRAIN_DIR)
-    val_dataset = SoccerLocalResidualDataset(Config.VAL_DIR)
+    train_dataset = LocationAwareDataset(Config.TRAIN_DIR)
+    val_dataset = LocationAwareDataset(Config.VAL_DIR)
     
     train_loader = DataLoader(train_dataset, batch_size=Config.BATCH_SIZE, 
-                              shuffle=True, collate_fn=local_residual_collate_fn, 
+                              shuffle=True, collate_fn=location_aware_collate_fn, 
                               num_workers=Config.NUM_WORKERS, pin_memory=True)
     
     val_loader = DataLoader(val_dataset, batch_size=Config.BATCH_SIZE, 
-                            shuffle=False, collate_fn=local_residual_collate_fn, 
+                            shuffle=False, collate_fn=location_aware_collate_fn, 
                             num_workers=Config.NUM_WORKERS, pin_memory=True)
     
-    model = ResidualHierarchicalLSTM(
+    model = LocationAwareHierarchicalLSTM(
         input_size=Config.INPUT_SIZE,
         phase_hidden=Config.PHASE_HIDDEN,
         episode_hidden=Config.EPISODE_HIDDEN,
@@ -243,7 +268,7 @@ def run_training():
             if batch[0] is None: continue
             
             optimizer.zero_grad()
-            # Input index: 6 is last_phase_start_pos
+            # Input index: 6 is padded_coords
             preds = model(batch[0], batch[1], batch[2], batch[4], batch[5], batch[6])
             
             loss = criterion(preds, batch[3])
@@ -269,7 +294,7 @@ def run_training():
         
         if avg_val < best_dist_error:
             best_dist_error = avg_val
-            save_name = f"local_residual_dist{best_dist_error:.4f}m.pth"
+            save_name = f"location_aware_dist{best_dist_error:.4f}m.pth"
             torch.save(model.state_dict(), os.path.join(Config.WEIGHT_DIR, save_name))
             print(f"   💾 Best Model Saved: {save_name}")
 
