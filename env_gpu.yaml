@@ -16,3 +16,4 @@ dependencies:
   - torchaudio
   - pytorch-cuda=12.1
   - pip
+  - tqdm

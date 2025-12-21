@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
 
 class BaselineLSTM(nn.Module):
     def __init__(self, input_size=5, hidden_size=256, num_layers=3, output_size=2, dropout_rate=0.3):
