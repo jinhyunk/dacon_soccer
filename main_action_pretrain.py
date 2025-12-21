@@ -130,7 +130,7 @@ class PhasePretrainDataset(Dataset):
         self.action_map = ACTION_TO_IDX
         self.all_phases = []
 
-        print(f"🔄 [Pre-train] Loading Phase Data...")
+        print(f"🔄 [Pre-train] Loading Phase Data (Fixing Leakage)...")
         for fpath in tqdm(self.file_paths):
             try:
                 df = pd.read_csv(fpath)
@@ -148,17 +148,28 @@ class PhasePretrainDataset(Dataset):
                 features = df[['start_x', 'start_y', 'end_x', 'end_y', 'time_seconds']].values
                 
                 for _, group in df.groupby('phase', sort=False):
+                    # [중요] 길이가 1인 Phase는 "다음"을 예측할 수 없으므로 제외
+                    if len(group) < 2: continue
+                    
                     phase_data = features[group.index]
                     
-                    # Context 정보 추출
-                    start_act = self.action_map.get(group.iloc[0]['type_name'], 32)
-                    len_idx = min(len(group), Config.MAX_PHASE_LEN_EMBED - 1)
+                    # -----------------------------------------------------------
+                    # 🚨 [Leakage Fix] 입력(Input)과 정답(Target) 분리
+                    # -----------------------------------------------------------
+                    # Input: 마지막 시점을 제외한 모든 데이터 (0 ~ T-1)
+                    input_data = phase_data[:-1] 
                     
-                    # Target: Phase의 끝 (end_x, end_y)
+                    # Target: 마지막 시점의 종료 좌표 (T)
                     target = phase_data[-1, 2:4]
                     
+                    # Context 정보
+                    start_act = self.action_map.get(group.iloc[0]['type_name'], 32)
+                    
+                    # Length Embedding용 길이도 Input 길이에 맞춰야 함
+                    len_idx = min(len(input_data), Config.MAX_PHASE_LEN_EMBED - 1)
+                    
                     self.all_phases.append({
-                        'data': torch.FloatTensor(phase_data),
+                        'data': torch.FloatTensor(input_data),
                         'start_act': start_act,
                         'len_id': len_idx,
                         'target': torch.FloatTensor(target)
@@ -169,7 +180,7 @@ class PhasePretrainDataset(Dataset):
     def __getitem__(self, idx):
         item = self.all_phases[idx]
         return item['data'], item['start_act'], item['len_id'], item['target']
-
+    
 def pretrain_collate_fn(batch):
     data, start_act, len_id, target = zip(*batch)
     padded_data = pad_sequence(data, batch_first=True, padding_value=0)
@@ -315,8 +326,8 @@ def run_finetuning(model, train_loader, val_loader):
             param.requires_grad = False
             
     # 2. Optimizer
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), 
-                           lr=Config.FINETUNE_LR, weight_decay=1e-5)
+    optimizer = optim.Adam(model.parameters(), lr=Config.FINETUNE_LR)
+    
     criterion = RealDistanceLoss(max_x=Config.MAX_X, max_y=Config.MAX_Y)
     
     best_dist = float('inf')
