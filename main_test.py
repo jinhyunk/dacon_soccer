@@ -234,7 +234,7 @@ class SoccerCompleteDataset(Dataset):
             return (phases_data, phases_actions, torch.FloatTensor(target), 
                     phase_lens, torch.FloatTensor(np.array(domain_feats)))
         except: return None
-        
+
 def complete_collate_fn(batch):
     batch = [x for x in batch if x is not None]
     if not batch: return (None,)*7
@@ -381,15 +381,18 @@ def run_finetuning(model, train_loader, val_loader):
     
     for epoch in range(Config.FINETUNE_EPOCHS):
         # --- Train ---
-        model.train() # BatchNorm/Dropout을 위해 train mode 유지 (Freeze는 grad로 제어됨)
+        model.train() 
         train_loss = 0
         for batch in tqdm(train_loader, desc=f"Finetune Epoch {epoch+1}/{Config.FINETUNE_EPOCHS}"):
             batch = [b.to(Config.DEVICE) for b in batch]
             if batch[0] is None: continue
             
             optimizer.zero_grad()
-            # Full Forward Pass
-            preds = model(*batch) # unpack batch
+            
+            # [수정] *batch 대신 인덱스로 입력 지정 (targets인 batch[4] 제외)
+            # 순서: phases(0), actions(1), p_lens(2), ep_lens(3), len_ids(5), domain(6)
+            preds = model(batch[0], batch[1], batch[2], batch[3], batch[5], batch[6])
+            
             loss = criterion(preds, batch[4]) # batch[4] is targets
             loss.backward()
             optimizer.step()
@@ -405,7 +408,9 @@ def run_finetuning(model, train_loader, val_loader):
                 batch = [b.to(Config.DEVICE) for b in batch]
                 if batch[0] is None: continue
                 
-                preds = model(*batch)
+                # [수정] 검증 때도 동일하게 입력
+                preds = model(batch[0], batch[1], batch[2], batch[3], batch[5], batch[6])
+                
                 loss = criterion(preds, batch[4])
                 val_loss += loss.item()
                 
@@ -420,11 +425,11 @@ def run_finetuning(model, train_loader, val_loader):
         print(f"   Train Loss: {train_loss/len(train_loader):.5f} | Val Loss: {val_loss/len(val_loader):.5f}")
         print(f"   📏 Avg Distance: {avg_dist:.4f} meters")
         
-        if avg_dist < best_dist:
-            best_dist = avg_dist
-            os.makedirs(Config.WEIGHT_DIR, exist_ok=True)
-            torch.save(model.state_dict(), f"{Config.WEIGHT_DIR}/best_unified_model.pth")
-            print(f"   💾 Best Model Saved ({best_dist:.4f}m)")
+        # if avg_dist < best_dist:
+        #     best_dist = avg_dist
+        #     os.makedirs(Config.WEIGHT_DIR, exist_ok=True)
+        #     torch.save(model.state_dict(), f"{Config.WEIGHT_DIR}/best_unified_model.pth")
+        #     print(f"   💾 Best Model Saved ({best_dist:.4f}m)")
 
 # ==========================================
 # 5. Main Execution Block
