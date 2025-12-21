@@ -8,8 +8,7 @@ import numpy as np
 import glob
 import os
 from tqdm import tqdm
-from model import * 
-# --- 1. 설정 (Hyperparameters) ---
+from model import * # --- 1. 설정 (Hyperparameters) ---
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
@@ -165,3 +164,22 @@ if __name__ == "__main__":
     
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, 
                               shuffle=True, collate_fn=baseline_collate_fn, num_workers=4, pin_memory=True)
+    
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, 
+                            shuffle=False, collate_fn=baseline_collate_fn, num_workers=4, pin_memory=True)
+    
+    # 모델 초기화 (기본 LSTM)
+    model = BaselineLSTM(
+        input_size=5, 
+        hidden_size=256, 
+        num_layers=3, 
+        output_size=2, 
+        dropout_rate=0.3
+    ).to(device)
+    
+    optimizer = optim.Adam(model.parameters(), lr=LR)
+    
+    # [변경] MSE -> RealDistanceLoss
+    criterion = RealDistanceLoss(max_x=MAX_X, max_y=MAX_Y)
+    
+    train_and_validate(model, train_loader, val_loader, optimizer, criterion, EPOCHS)
