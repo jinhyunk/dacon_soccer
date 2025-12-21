@@ -309,8 +309,6 @@ class SoccerLightDataset(Dataset):
         self.MAX_TIME = 95 * 60.0 # 5700초
         self.EOS_VALUE = -1.0 # EOS 토큰 값
         self.MAX_PHASE_LEN_EMBED = 30
-        # Action 매핑 로드
-        
 
     def __len__(self):
         return len(self.file_paths)
@@ -350,7 +348,7 @@ class SoccerLightDataset(Dataset):
                 
                 # (B) Actions
                 action_seq = [self.action_map.get(name, self.action_map['Other']) for name in group['type_name']]
-                action_seq.append(self.EOS_ACTION_ID)
+                action_seq.append(32)
                 phases_actions.append(torch.LongTensor(action_seq))
                 
                 # (C) Context Length
