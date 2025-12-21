@@ -29,13 +29,14 @@ class Config:
     MAX_PHASE_LEN_EMBED = 30 # Phase 길이 임베딩 최대값
     ACTION_EMB_DIM = 4      # 매 스텝 Action 임베딩 차원
     LEN_EMB_DIM = 4         # Length 임베딩 차원
-    DOMAIN_INPUT_DIM = 5    # [NEW] 도메인 피처 차원 (dx, dy, ddist, speed, norm_len)
+    
+    DOMAIN_INPUT_DIM = 2    # [NEW] 도메인 피처 차원 (dx, dy, ddist, speed, norm_len)
     
     # 모델 하이퍼파라미터
     INPUT_SIZE = 5          # [sx, sy, ex, ey, t]
-    PHASE_HIDDEN = 64
-    EPISODE_HIDDEN = 256
-    DROPOUT = 0.3
+    PHASE_HIDDEN = 32
+    EPISODE_HIDDEN = 128
+    DROPOUT = 0.4
     
     # 경로
     TRAIN_DIR = './data/train'

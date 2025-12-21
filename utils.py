@@ -299,12 +299,8 @@ def hierarchical_collate_fn2(batch):
     # 반환값에 Context Tensor들 추가
     return padded_phases, phase_lengths, episode_lengths, targets, start_action_ids, phase_len_ids
 
-class SoccerCompleteDataset(Dataset):
+class SoccerLightDataset(Dataset):
     def __init__(self, data_dir):
-        """
-        Args:
-            data_dir (str): 데이터 파일들이 있는 폴더 경로
-        """
         self.file_paths = glob.glob(os.path.join(data_dir, '*.csv'))
         self.action_map = ACTION_TO_IDX
         
@@ -314,12 +310,7 @@ class SoccerCompleteDataset(Dataset):
         self.EOS_VALUE = -1.0 # EOS 토큰 값
         self.MAX_PHASE_LEN_EMBED = 30
         # Action 매핑 로드
-        self.action_map = ACTION_TO_IDX
         
-        # 도메인 지식 계산을 위한 상수 (골대 위치: (105, 34))
-        self.GOAL_X = 105.0
-        self.GOAL_Y = 34.0
-        self.MAX_DIST = np.sqrt(self.GOAL_X**2 + self.GOAL_Y**2) # 대각선 최대 거리
 
     def __len__(self):
         return len(self.file_paths)
@@ -327,127 +318,79 @@ class SoccerCompleteDataset(Dataset):
     def __getitem__(self, idx):
         file_path = self.file_paths[idx]
         try:
-            # 1. 데이터 로드
             df = pd.read_csv(file_path)
             if len(df) < 2: return None
             
-            # Phase 컬럼 생성 (없을 경우)
             if 'phase' not in df.columns:
                  df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
 
-            # 2. 정규화 (Normalization) - Feature용
+            # 정규화
             sx = df['start_x'].values / self.MAX_X
             sy = df['start_y'].values / self.MAX_Y
             ex = df['end_x'].values / self.MAX_X
             ey = df['end_y'].values / self.MAX_Y
             t  = df['time_seconds'].values / self.MAX_TIME
             
-            # (Seq, 5) 전체 Feature Matrix
             features = np.stack([sx, sy, ex, ey, t], axis=1)
+            target = features[-1, 2:4]
             
-            # 3. Input / Target 분리
-            target = features[-1, 2:4] # [end_x, end_y]
-            
-            # 마지막 이벤트를 제외한 입력 데이터
             input_features = features[:-1]
             input_df = df.iloc[:-1].copy()
             
-            # 4. Phase 별 데이터 추출을 위한 리스트 초기화
-            phases_data = []         # 좌표 정보 Tensor List
-            phases_actions = []      # Action ID Tensor List
-            phase_lengths_list = []  # Phase 길이 List
-            domain_features_list = [] # 도메인 지식 Feature List
+            phases_data = []
+            phases_actions = []
+            phase_lengths_list = []
+            domain_features_list = []
             
-            # Phase 단위 그룹화
             for _, group in input_df.groupby('phase', sort=False):
-                # -------------------------------------------------
-                # (A) Dynamic Input 1: Coordinates (좌표)
-                # -------------------------------------------------
+                # (A) Coordinates
                 phase_feats = input_features[group.index]
-                # EOS(End of Sequence) Row 추가
                 eos_row = np.full((1, 5), self.EOS_VALUE)
-                phase_feats_with_eos = np.vstack([phase_feats, eos_row])
-                phases_data.append(torch.FloatTensor(phase_feats_with_eos))
+                phases_data.append(torch.FloatTensor(np.vstack([phase_feats, eos_row])))
                 
-                # -------------------------------------------------
-                # (B) Dynamic Input 2: Action Sequence (액션 ID)
-                # -------------------------------------------------
+                # (B) Actions
                 action_seq = [self.action_map.get(name, self.action_map['Other']) for name in group['type_name']]
-                # EOS Action ID 추가
-                action_seq.append(32)
+                action_seq.append(self.EOS_ACTION_ID)
                 phases_actions.append(torch.LongTensor(action_seq))
                 
-                # -------------------------------------------------
-                # (C) Context Feature: Phase Length
-                # -------------------------------------------------
+                # (C) Context Length
                 length = len(group)
                 phase_lengths_list.append(min(length, self.MAX_PHASE_LEN_EMBED - 1))
                 
-                # -------------------------------------------------
-                # (D) Domain Knowledge Features (물리적 지표 계산)
-                # -------------------------------------------------
-                # 원본 좌표 사용 (그룹의 첫 행과 마지막 행)
+                # (D) Domain Features (단순화: 전진거리, 공격시간)
                 p_start_x = group.iloc[0]['start_x']
-                p_start_y = group.iloc[0]['start_y']
                 p_end_x = group.iloc[-1]['end_x']
-                p_end_y = group.iloc[-1]['end_y']
                 
+                # 시간 계산 (Phase 종료 시간 - 시작 시간)
                 p_start_time = group.iloc[0]['time_seconds']
                 p_end_time = group.iloc[-1]['time_seconds']
-                p_duration = p_end_time - p_start_time
+                duration = p_end_time - p_start_time
                 
-                # 1. 전진 거리 (X축 변위) - 정규화
+                # 1. 전진 거리 (X축 변위) - 105m 정규화
                 delta_x = (p_end_x - p_start_x) / self.MAX_X
                 
-                # 2. 횡 이동 거리 (Y축 변위 절대값) - 정규화
-                delta_y = abs(p_end_y - p_start_y) / self.MAX_Y
+                # 2. 공격 지속 시간 (Duration) - 30초 정도로 나누어 스케일링 (너무 큰 값 방지)
+                # 대부분의 공격 작업은 1분 이내이므로 30~60으로 나누면 적당함
+                norm_duration = duration / 30.0
                 
-                # 3. 골대와의 거리 변화 (가까워졌는가?)
-                dist_start = np.sqrt((self.GOAL_X - p_start_x)**2 + (self.GOAL_Y - p_start_y)**2)
-                dist_end = np.sqrt((self.GOAL_X - p_end_x)**2 + (self.GOAL_Y - p_end_y)**2)
-                # 값이 클수록 골대에 많이 가까워짐 (양수: 접근, 음수: 후퇴)
-                delta_dist = (dist_start - dist_end) / self.MAX_DIST
-                
-                # 4. 속도 (Speed)
-                total_move_dist = np.sqrt((p_end_x - p_start_x)**2 + (p_end_y - p_start_y)**2)
-                # 0으로 나누기 방지 (+1e-5), 스케일링을 위해 10으로 나눔
-                speed = (total_move_dist / (p_duration + 1e-5)) / 10.0
-                
-                # 5. 정규화된 길이 (하나의 피처로 사용)
-                norm_len = length / 30.0
-                
-                # Feature Vector 합치기 (5차원)
-                d_feats = np.array([delta_x, delta_y, delta_dist, speed, norm_len])
+                # Feature Vector (2차원)
+                d_feats = np.array([delta_x, norm_duration])
                 domain_features_list.append(d_feats)
 
             if not phases_data: return None
             
-            # 최종 반환: (좌표리스트, 액션리스트, 타겟, 길이리스트, 도메인피처텐서)
-            return (phases_data, 
-                    phases_actions, 
-                    torch.FloatTensor(target), 
-                    phase_lengths_list, 
-                    torch.FloatTensor(np.array(domain_features_list)))
+            return (phases_data, phases_actions, torch.FloatTensor(target), 
+                    phase_lengths_list, torch.FloatTensor(np.array(domain_features_list)))
 
         except Exception as e:
-            # print(f"Error loading {file_path}: {e}") # 디버깅 시 주석 해제
             return None
 
-# ==========================================
-# 2. Collate Function
-# ==========================================
-def complete_collate_fn(batch):
-    """
-    DataLoader에서 사용될 Collate Function
-    """
-    # None 데이터 필터링
+def light_collate_fn(batch):
     batch = [item for item in batch if item is not None]
     if not batch: return None, None, None, None, None, None, None
     
-    # Unpack Batch Data
     batch_phases, batch_actions, batch_targets, batch_lens, batch_domain = zip(*batch)
     
-    # Flatten Lists (Batch 구조를 풀고 일렬로 나열)
     all_phases = []
     all_actions = []
     episode_lengths = []
@@ -457,27 +400,19 @@ def complete_collate_fn(batch):
     for i in range(len(batch_phases)):
         all_phases.extend(batch_phases[i])
         all_actions.extend(batch_actions[i])
-        episode_lengths.append(len(batch_phases[i])) # 에피소드 당 Phase 개수
+        episode_lengths.append(len(batch_phases[i]))
         all_lens.extend(batch_lens[i])
         all_domain.extend(batch_domain[i])
         
-    # 1. Pad Coordinates (Total_Phases, Max_Seq, 5)
     padded_phases = pad_sequence(all_phases, batch_first=True, padding_value=0)
-    
-    # 2. Pad Actions (Total_Phases, Max_Seq)
-    # Action Padding 값은 'Other'(32) 사용
     padded_actions = pad_sequence(all_actions, batch_first=True, padding_value=32)
     
-    # 3. Create Length Tensors
     phase_lengths = torch.LongTensor([len(p) for p in all_phases])
     episode_lengths = torch.LongTensor(episode_lengths)
-    
-    # 4. Stack Other Tensors
     targets = torch.stack(batch_targets)
     phase_len_ids = torch.LongTensor(all_lens)
     
-    # Domain Feature는 이미 (5,) 형태이므로 Stack (Total_Phases, 5)
-    # 리스트 내부가 numpy array일 수 있으므로 tensor로 변환하며 stack
+    # 도메인 피처 스택
     domain_features = torch.stack([torch.FloatTensor(d) for d in all_domain])
     
     return padded_phases, padded_actions, phase_lengths, episode_lengths, targets, phase_len_ids, domain_features
