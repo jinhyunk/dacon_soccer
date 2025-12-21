@@ -92,7 +92,9 @@ def run_training():
             targets = targets.to(Config.DEVICE)
             start_action_ids = start_action_ids.to(Config.DEVICE)
             phase_len_ids = phase_len_ids.to(Config.DEVICE)
-            
+            phase_lengths = phase_lengths.to(Config.DEVICE) 
+            episode_lengths = episode_lengths.to(Config.DEVICE)
+                
             optimizer.zero_grad()
             
             # Forward (Attention Model)
@@ -121,6 +123,8 @@ def run_training():
                 targets = targets.to(Config.DEVICE)
                 start_action_ids = start_action_ids.to(Config.DEVICE)
                 phase_len_ids = phase_len_ids.to(Config.DEVICE)
+                phase_lengths = phase_lengths.to(Config.DEVICE) 
+                episode_lengths = episode_lengths.to(Config.DEVICE)
                 
                 preds = model(padded_phases, phase_lengths, episode_lengths, start_action_ids, phase_len_ids)
                 
