@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
+from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
 
 # ==========================================
 # 0. Configuration
@@ -18,13 +18,13 @@ class Config:
     BATCH_SIZE = 256        
     LR = 0.001
     EPOCHS = 50
-    NUM_WORKERS = 0 # 멈춤 현상 방지
+    NUM_WORKERS = 0 
     
     # 데이터 정규화 상수
     MAX_X = 105.0
     MAX_Y = 68.0
     MAX_TIME = 5700.0
-    EOS_VALUE = 0.0 # Delta 값의 패딩은 0이 자연스러움 (이동 없음)
+    EOS_VALUE = 0.0 
     
     # 임베딩 & 모델 파라미터
     NUM_ACTIONS = 33
@@ -35,13 +35,12 @@ class Config:
     INPUT_SIZE = 5       # [sx, sy, dx, dy, t]
     PHASE_HIDDEN = 64
     EPISODE_HIDDEN = 256
-    DROPOUT = 0.3        # 데이터가 적으므로 규제 유지
+    DROPOUT = 0.3        
     
     TRAIN_DIR = './data/train'
     VAL_DIR = './data/val'
     WEIGHT_DIR = './weight'
 
-# Action Dictionary
 ACTION_TO_IDX = {
     'Aerial Clearance': 0, 'Block': 1, 'Carry': 2, 'Catch': 3, 'Clearance': 4,
     'Cross': 5, 'Deflection': 6, 'Duel': 7, 'Error': 8, 'Foul': 9,
@@ -54,7 +53,7 @@ ACTION_TO_IDX = {
 }
 
 # ==========================================
-# 1. Custom Loss (Real Distance)
+# 1. Custom Loss
 # ==========================================
 class RealDistanceLoss(nn.Module):
     def __init__(self, max_x=105.0, max_y=68.0):
@@ -64,16 +63,17 @@ class RealDistanceLoss(nn.Module):
         self.epsilon = 1e-6
 
     def forward(self, pred, target):
-        # pred, target: Normalized absolute coordinates [0, 1]
+        # pred: Model이 예측한 최종 절대 좌표 (Start + Delta)
+        # target: 실제 정답 절대 좌표
         diff_x = (pred[:, 0] - target[:, 0]) * self.max_x
         diff_y = (pred[:, 1] - target[:, 1]) * self.max_y
         distance = torch.sqrt(diff_x**2 + diff_y**2 + self.epsilon)
         return distance.mean()
 
 # ==========================================
-# 2. Dataset (Relative Coordinates)
+# 2. Dataset (Episode Start Pos 추가)
 # ==========================================
-class SoccerRelativeDataset(Dataset):
+class SoccerResidualDataset(Dataset):
     def __init__(self, data_dir):
         self.file_paths = glob.glob(os.path.join(data_dir, '*.csv'))
         self.action_map = ACTION_TO_IDX
@@ -87,27 +87,28 @@ class SoccerRelativeDataset(Dataset):
             if 'phase' not in df.columns:
                  df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
 
-            # 1. 정규화 (Normalization)
+            # 1. 정규화
             sx = df['start_x'].values / Config.MAX_X
             sy = df['start_y'].values / Config.MAX_Y
             ex = df['end_x'].values / Config.MAX_X
             ey = df['end_y'].values / Config.MAX_Y
             t  = df['time_seconds'].values / Config.MAX_TIME
             
-            # 2. [핵심] 상대 좌표 (Delta) 계산
-            # 절대 좌표(sx, sy)는 현재 위치 정보를 위해 유지
-            # 도착 좌표(ex, ey) 대신 이동 벡터(dx, dy) 사용
+            # 2. Episode Start Position 추출 (Residual 연결용)
+            # 에피소드의 가장 첫 번째 이벤트의 시작 위치
+            # (정규화된 상태여야 함)
+            ep_start_x = sx[0]
+            ep_start_y = sy[0]
+            episode_start_pos = np.array([ep_start_x, ep_start_y])
+            
+            # 3. 상대 좌표 (Delta) 계산
             dx = ex - sx
             dy = ey - sy
             
-            # Input Features: [start_x, start_y, delta_x, delta_y, time]
             features = np.stack([sx, sy, dx, dy, t], axis=1)
-            
-            # Target: 에피소드 마지막의 '절대 좌표' (Loss 계산용)
-            # (모델은 내부적으로 이동 흐름을 배우고, 최종적으로 절대 위치를 맞추도록 학습)
             target = np.array([ex[-1], ey[-1]]) 
             
-            # 3. Phase 분리
+            # 4. Phase 분리
             input_features = features[:-1]
             input_df = df.iloc[:-1].copy()
             
@@ -115,26 +116,23 @@ class SoccerRelativeDataset(Dataset):
             
             for _, group in input_df.groupby('phase', sort=False):
                 p_feats = input_features[group.index]
-                
-                # Padding (EOS)
                 eos = np.full((1, 5), Config.EOS_VALUE)
                 phases_data.append(torch.FloatTensor(np.vstack([p_feats, eos])))
                 
-                # Context Info
                 act_name = group.iloc[0]['type_name']
                 start_actions.append(self.action_map.get(act_name, 32))
                 phase_lens.append(min(len(group), Config.MAX_PHASE_LEN_EMBED - 1))
                 
             if not phases_data: return None
             
-            return (phases_data, torch.FloatTensor(target), start_actions, phase_lens)
+            return (phases_data, torch.FloatTensor(target), start_actions, phase_lens, torch.FloatTensor(episode_start_pos))
         except: return None
 
-def relative_collate_fn(batch):
+def residual_collate_fn(batch):
     batch = [x for x in batch if x is not None]
-    if not batch: return (None,)*6
+    if not batch: return (None,)*7
     
-    b_phases, b_targets, b_acts, b_lens = zip(*batch)
+    b_phases, b_targets, b_acts, b_lens, b_start_pos = zip(*batch)
     
     all_phases, all_acts, all_lens_ids, ep_lens = [], [], [], []
     for i in range(len(b_phases)):
@@ -150,15 +148,18 @@ def relative_collate_fn(batch):
     start_action_ids = torch.LongTensor(all_acts)
     phase_len_ids = torch.LongTensor(all_lens_ids)
     
-    return pad_phases, phase_lengths, episode_lengths, targets, start_action_ids, phase_len_ids
+    # [NEW] Episode Start Positions
+    episode_start_pos = torch.stack(b_start_pos)
+    
+    return pad_phases, phase_lengths, episode_lengths, targets, start_action_ids, phase_len_ids, episode_start_pos
 
 # ==========================================
-# 3. Model (ContextAwareHierarchicalLSTM)
+# 3. Model (Residual Prediction)
 # ==========================================
-class ContextAwareHierarchicalLSTM(nn.Module):
+class ResidualHierarchicalLSTM(nn.Module):
     def __init__(self, input_size=5, phase_hidden=64, episode_hidden=256, output_size=2, dropout=0.3,
                  num_actions=33, max_phase_len=30, action_emb_dim=4, len_emb_dim=4):
-        super(ContextAwareHierarchicalLSTM, self).__init__()
+        super(ResidualHierarchicalLSTM, self).__init__()
         
         # Context Embeddings
         self.action_embedding = nn.Embedding(num_actions, action_emb_dim)
@@ -171,7 +172,7 @@ class ContextAwareHierarchicalLSTM(nn.Module):
         # Episode LSTM
         self.episode_lstm = nn.LSTM(phase_hidden, episode_hidden, num_layers=2, batch_first=True, dropout=dropout)
         
-        # Regressor
+        # Regressor (Predicts DELTA, not Absolute Position)
         self.regressor = nn.Sequential(
             nn.Linear(episode_hidden, episode_hidden // 2),
             nn.ReLU(),
@@ -179,7 +180,10 @@ class ContextAwareHierarchicalLSTM(nn.Module):
             nn.Linear(episode_hidden // 2, output_size)
         )
 
-    def forward(self, padded_phases, phase_lengths, episode_lengths, start_action_ids, phase_len_ids):
+    def forward(self, padded_phases, phase_lengths, episode_lengths, start_action_ids, phase_len_ids, episode_start_pos):
+        """
+        episode_start_pos: (Batch_Size, 2) - Normalized [sx, sy] of episode start
+        """
         # 1. Context Injection
         action_emb = self.action_embedding(start_action_ids)
         len_emb = self.length_embedding(phase_len_ids)
@@ -201,8 +205,15 @@ class ContextAwareHierarchicalLSTM(nn.Module):
         packed_episodes = pack_padded_sequence(padded_episodes, episode_lengths.cpu(), batch_first=True, enforce_sorted=False)
         _, (episode_h_n, _) = self.episode_lstm(packed_episodes)
         
-        # 4. Prediction
-        return self.regressor(episode_h_n[-1])
+        # 4. Residual Prediction
+        # 모델의 출력은 '총 이동량(Total Delta)'입니다.
+        predicted_delta = self.regressor(episode_h_n[-1])
+        
+        # 5. Final Absolute Position Calculation
+        # 최종 위치 = 시작 위치 + 예측된 이동량
+        final_prediction = episode_start_pos + predicted_delta
+        
+        return final_prediction
 
 # ==========================================
 # 4. Training Engine
@@ -210,21 +221,21 @@ class ContextAwareHierarchicalLSTM(nn.Module):
 def run_training():
     os.makedirs(Config.WEIGHT_DIR, exist_ok=True)
     print(f"✅ Device: {Config.DEVICE}")
-    print("📂 데이터 로드 중 (Relative Coordinates)...")
+    print("📂 데이터 로드 중 (Residual + Relative)...")
     
-    train_dataset = SoccerRelativeDataset(Config.TRAIN_DIR)
-    val_dataset = SoccerRelativeDataset(Config.VAL_DIR)
+    train_dataset = SoccerResidualDataset(Config.TRAIN_DIR)
+    val_dataset = SoccerResidualDataset(Config.VAL_DIR)
     
     train_loader = DataLoader(train_dataset, batch_size=Config.BATCH_SIZE, 
-                              shuffle=True, collate_fn=relative_collate_fn, 
+                              shuffle=True, collate_fn=residual_collate_fn, 
                               num_workers=Config.NUM_WORKERS, pin_memory=True)
     
     val_loader = DataLoader(val_dataset, batch_size=Config.BATCH_SIZE, 
-                            shuffle=False, collate_fn=relative_collate_fn, 
+                            shuffle=False, collate_fn=residual_collate_fn, 
                             num_workers=Config.NUM_WORKERS, pin_memory=True)
     
     # 모델 초기화
-    model = ContextAwareHierarchicalLSTM(
+    model = ResidualHierarchicalLSTM(
         input_size=Config.INPUT_SIZE,
         phase_hidden=Config.PHASE_HIDDEN,
         episode_hidden=Config.EPISODE_HIDDEN,
@@ -246,11 +257,10 @@ def run_training():
             if batch[0] is None: continue
             
             optimizer.zero_grad()
-            # padded_phases, phase_lengths, episode_lengths, targets(index 3), start_action_ids, phase_len_ids
-            # model input: phases, p_lens, ep_lens, act_ids, l_ids
-            preds = model(batch[0], batch[1], batch[2], batch[4], batch[5])
+            # Input args: phases, p_lens, ep_lens, act_ids, l_ids, START_POS(idx 6)
+            preds = model(batch[0], batch[1], batch[2], batch[4], batch[5], batch[6])
             
-            loss = criterion(preds, batch[3]) # targets
+            loss = criterion(preds, batch[3]) # batch[3] is targets (absolute)
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
@@ -265,7 +275,7 @@ def run_training():
                 batch = [b.to(Config.DEVICE) for b in batch]
                 if batch[0] is None: continue
                 
-                preds = model(batch[0], batch[1], batch[2], batch[4], batch[5])
+                preds = model(batch[0], batch[1], batch[2], batch[4], batch[5], batch[6])
                 loss = criterion(preds, batch[3])
                 val_loss += loss.item()
         
@@ -273,12 +283,12 @@ def run_training():
         
         print(f"   Train Loss: {avg_train:.4f}m | Val Loss: {avg_val:.4f}m")
         
-        if avg_val < best_dist_error:
-            best_dist_error = avg_val
-            save_name = f"relative_action_dist{best_dist_error:.4f}m.pth"
-            save_path = os.path.join(Config.WEIGHT_DIR, save_name)
-            torch.save(model.state_dict(), save_path)
-            print(f"   💾 Best Model Saved: {save_name}")
+        # if avg_val < best_dist_error:
+        #     best_dist_error = avg_val
+        #     save_name = f"residual_action_dist{best_dist_error:.4f}m.pth"
+        #     save_path = os.path.join(Config.WEIGHT_DIR, save_name)
+        #     torch.save(model.state_dict(), save_path)
+        #     print(f"   💾 Best Model Saved: {save_name}")
 
 if __name__ == "__main__":
     run_training()
