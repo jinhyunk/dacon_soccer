@@ -17,6 +17,7 @@ class Config:
     
     BATCH_SIZE = 256        
     LR = 0.001
+    MAX_LR = 0.01
     EPOCHS = 50
     NUM_WORKERS = 4
     
@@ -34,7 +35,7 @@ class Config:
     
     INPUT_SIZE = 5       # Phase LSTM Input
     PHASE_HIDDEN = 64
-    EPISODE_HIDDEN = 1024
+    EPISODE_HIDDEN = 512
     DROPOUT = 0.3        
     
     TRAIN_DIR = './data/train'
@@ -51,22 +52,6 @@ ACTION_TO_IDX = {
     'Shot_Corner': 27, 'Shot_Freekick': 28, 'Tackle': 29, 'Take-On': 30,
     'Throw-In': 31, 'Other': 32
 }
-
-# ==========================================
-# 1. Custom Loss (Real Distance)
-# ==========================================
-class RealDistanceLoss(nn.Module):
-    def __init__(self, max_x=105.0, max_y=68.0):
-        super(RealDistanceLoss, self).__init__()
-        self.max_x = max_x
-        self.max_y = max_y
-        self.epsilon = 1e-6
-
-    def forward(self, pred, target):
-        diff_x = (pred[:, 0] - target[:, 0]) * self.max_x
-        diff_y = (pred[:, 1] - target[:, 1]) * self.max_y
-        distance = torch.sqrt(diff_x**2 + diff_y**2 + self.epsilon)
-        return distance.mean()
 
 # ==========================================
 # 2. Dataset (Location Aware)
@@ -259,11 +244,21 @@ def run_training():
     
     # [안정화 2] Scheduler (CosineAnnealingWarmRestarts 추천)
     # 전체 학습에서는 Local Minima 탈출을 위해 Cosine Annealing이 유리합니다.
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=10, T_mult=2, eta_min=1e-5
+    scheduler = optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=Config.MAX_LR,
+        steps_per_epoch=len(train_loader),
+        epochs=Config.EPOCHS,
+        pct_start=0.3, # 30% 시점까지 LR 상승
+        div_factor=25.0
     )
     
-    criterion = RealDistanceLoss(max_x=Config.MAX_X, max_y=Config.MAX_Y)
+    criterion_train = nn.MSELoss()
+
+    def dist_loss_fn(pred, target):
+        diff_x = (pred[:, 0] - target[:, 0]) * Config.MAX_X
+        diff_y = (pred[:, 1] - target[:, 1]) * Config.MAX_Y
+        return torch.sqrt(diff_x**2 + diff_y**2 + 1e-6).mean()
     
     best_dist_error = float('inf')
     
@@ -279,15 +274,14 @@ def run_training():
             # Input index: 6 is padded_coords
             preds = model(batch[0], batch[1], batch[2], batch[4], batch[5], batch[6])
             
-            loss = criterion(preds, batch[3])
+            loss = criterion_train(preds, batch[3])
             loss.backward()
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
             optimizer.step()
+            scheduler.step() # Batch마다 호출
             train_loss += loss.item()
         
-        scheduler.step()
+
         avg_train = train_loss / len(train_loader)
         
         model.eval()
@@ -297,13 +291,14 @@ def run_training():
                 batch = [b.to(Config.DEVICE) for b in batch]
                 if batch[0] is None: continue
                 preds = model(batch[0], batch[1], batch[2], batch[4], batch[5], batch[6])
-                loss = criterion(preds, batch[3])
-                val_loss += loss.item()
+                val_dist_error += dist_loss_fn(preds, batch[3]).item()
         
-        avg_val = val_loss / len(val_loader)
+        avg_train_mse = train_loss / len(train_loader)
+        avg_val_dist = val_dist_error / len(val_loader)
+        current_lr = optimizer.param_groups[0]['lr']
         
-        print(f"   Train: {avg_train:.4f}m | Val: {avg_val:.4f}m")
-        
+        print(f"   Train(MSE): {avg_train_mse:.5f} | Val(Dist): {avg_val_dist:.4f}m | LR: {current_lr:.6f}")
+
         # if avg_val < best_dist_error:
         #     best_dist_error = avg_val
         #     save_name = f"location_aware_dist{best_dist_error:.4f}m.pth"
