@@ -279,9 +279,14 @@ def run_training():
         
         if avg_val < best_dist_error:
             best_dist_error = avg_val
-            save_name = f"location_aware_best.pth"
+            save_name = f"main_best.pth"
             torch.save(model.state_dict(), os.path.join(Config.WEIGHT_DIR, save_name))
             print(f"   💾 Best Model Saved: {save_name}")
+    
+    last_save_name = "main_last.pth"
+    torch.save(model.state_dict(), os.path.join(Config.WEIGHT_DIR, last_save_name))
+    print(f"   🏁 Last Model Saved: {last_save_name}")
+
 
 if __name__ == '__main__':
     # 재현성을 위한 시드 고정
