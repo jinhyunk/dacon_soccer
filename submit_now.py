@@ -1,5 +1,6 @@
 import os
 import glob
+import re
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -15,28 +16,27 @@ class Config:
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     BATCH_SIZE = 256
-    NUM_WORKERS = 4
+    NUM_WORKERS = 0 # 디버깅을 위해 0으로 설정 (Windows/Mac 호환성)
     
-    # 데이터 상수
     MAX_X = 105.0
     MAX_Y = 68.0
     MAX_TIME = 5700.0
     EOS_VALUE = 0.0 
     
-    # 모델 파라미터 (학습 코드와 동일해야 함)
+    # 모델 파라미터 (학습된 모델과 반드시 일치해야 함)
     NUM_ACTIONS = 33
     MAX_PHASE_LEN_EMBED = 30
     ACTION_EMB_DIM = 4
     LEN_EMB_DIM = 4
     
-    INPUT_SIZE = 5          # [sx, sy, dx, dy, t]
+    INPUT_SIZE = 5          
     PHASE_HIDDEN = 64
-    EPISODE_HIDDEN = 256
-    DROPOUT = 0.0           # Inference 모드이므로 0
+    EPISODE_HIDDEN = 256    # [주의] 학습시킨 모델이 256인지 512인지 꼭 확인하세요!
+    DROPOUT = 0.0           
     
-    TEST_DIR = './open_track1/test'
+    TEST_DIR = './open_track1/test' 
     WEIGHT_DIR = './weight'
-    MODEL_NAME = 'location_aware_best.pth' # 저장된 모델명
+    MODEL_NAME = 'location_aware_best.pth' 
     OUTPUT_FILE = './submission.csv'
 
 ACTION_TO_IDX = {
@@ -51,7 +51,7 @@ ACTION_TO_IDX = {
 }
 
 # ==========================================
-# 1. Model Definition (학습 코드와 동일)
+# 1. Model Definition
 # ==========================================
 class LocationAwareHierarchicalLSTM(nn.Module):
     def __init__(self, input_size=5, phase_hidden=64, episode_hidden=256, output_size=2, dropout=0.3,
@@ -61,11 +61,10 @@ class LocationAwareHierarchicalLSTM(nn.Module):
         self.action_embedding = nn.Embedding(num_actions, action_emb_dim)
         self.length_embedding = nn.Embedding(max_phase_len, len_emb_dim)
         
-        # 1. Phase LSTM
         self.phase_input_dim = input_size + action_emb_dim + len_emb_dim
         self.phase_lstm = nn.LSTM(self.phase_input_dim, phase_hidden, num_layers=1, batch_first=True)
         
-        # 2. Episode LSTM
+        # Episode LSTM
         self.episode_input_dim = phase_hidden + 2 
         self.episode_lstm = nn.LSTM(self.episode_input_dim, episode_hidden, num_layers=2, batch_first=True, dropout=dropout)
         
@@ -111,22 +110,27 @@ class LocationAwareHierarchicalLSTM(nn.Module):
         return final_prediction
 
 # ==========================================
-# 2. Test Dataset & Collate Fn
+# 2. Robust Test Dataset
 # ==========================================
 class SoccerTestDataset(Dataset):
     def __init__(self, data_dir):
-        # game_id/game_id_episode_id.csv 구조 탐색
-        self.file_paths = glob.glob(os.path.join(data_dir, '*', '*.csv'))
+        # [수정] 재귀적 탐색으로 모든 CSV 찾기 (폴더 구조 무관하게)
+        self.file_paths = glob.glob(os.path.join(data_dir, '**', '*.csv'), recursive=True)
         self.action_map = ACTION_TO_IDX
-        print(f"📂 Found {len(self.file_paths)} test files.")
+        
+        if len(self.file_paths) == 0:
+            print(f"⚠️ 경고: '{data_dir}' 경로에서 CSV 파일을 하나도 찾지 못했습니다!")
+            print("   -> 경로가 올바른지 확인해주세요.")
+        else:
+            print(f"📂 Found {len(self.file_paths)} test files.")
     
     def __len__(self): return len(self.file_paths)
     
     def __getitem__(self, idx):
         try:
             fpath = self.file_paths[idx]
-            # 파일명에서 game_episode ID 추출 (예: 153363_1.csv -> 153363_1)
             file_name = os.path.basename(fpath)
+            # 파일명에서 ID 추출
             game_episode_id = os.path.splitext(file_name)[0]
             
             df = pd.read_csv(fpath)
@@ -134,14 +138,12 @@ class SoccerTestDataset(Dataset):
             if 'phase' not in df.columns:
                  df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
 
-            # 정규화
             sx = df['start_x'].values / Config.MAX_X
             sy = df['start_y'].values / Config.MAX_Y
             ex = df['end_x'].values / Config.MAX_X
             ey = df['end_y'].values / Config.MAX_Y
             t  = df['time_seconds'].values / Config.MAX_TIME
             
-            # 상대 좌표 (Delta)
             dx = ex - sx
             dy = ey - sy
             
@@ -150,7 +152,6 @@ class SoccerTestDataset(Dataset):
             phases_data, start_actions, phase_lens = [], [], []
             phase_end_coords = []
             
-            # Test 데이터는 전체가 Input History임 (자르지 않음)
             for _, group in df.groupby('phase', sort=False):
                 p_feats = input_features[group.index]
                 eos = np.full((1, 5), Config.EOS_VALUE)
@@ -160,17 +161,16 @@ class SoccerTestDataset(Dataset):
                 start_actions.append(self.action_map.get(act_name, 32))
                 phase_lens.append(min(len(group), Config.MAX_PHASE_LEN_EMBED - 1))
                 
-                # Phase 종료 위치
                 last_x = group.iloc[-1]['end_x'] / Config.MAX_X
                 last_y = group.iloc[-1]['end_y'] / Config.MAX_Y
                 phase_end_coords.append([last_x, last_y])
 
             if not phases_data: return None
             
-            # Submission 생성을 위해 ID 반환
             return (phases_data, start_actions, phase_lens, torch.FloatTensor(phase_end_coords), game_episode_id)
         except Exception as e:
-            print(f"Error: {e}")
+            # 에러 발생 시 파일명 출력
+            print(f"❌ Error processing {self.file_paths[idx]}: {e}")
             return None
 
 def test_collate_fn(batch):
@@ -203,7 +203,14 @@ def test_collate_fn(batch):
 def run_inference():
     print(f"✅ Device: {Config.DEVICE}")
     
-    # 1. Load Model
+    # 1. Check Model File
+    model_path = os.path.join(Config.WEIGHT_DIR, Config.MODEL_NAME)
+    if not os.path.exists(model_path):
+        print(f"❌ Critical Error: Model file not found at {model_path}")
+        print("   -> 학습된 가중치 파일 이름과 경로를 Config에서 확인하세요.")
+        return
+
+    # 2. Init Model
     model = LocationAwareHierarchicalLSTM(
         input_size=Config.INPUT_SIZE,
         phase_hidden=Config.PHASE_HIDDEN,
@@ -211,17 +218,22 @@ def run_inference():
         dropout=Config.DROPOUT
     ).to(Config.DEVICE)
     
-    model_path = os.path.join(Config.WEIGHT_DIR, Config.MODEL_NAME)
-    if not os.path.exists(model_path):
-        print(f"❌ Error: Model file not found at {model_path}")
-        return
-
     print(f"🔄 Loading model from {model_path}...")
-    model.load_state_dict(torch.load(model_path, map_location=Config.DEVICE))
+    try:
+        model.load_state_dict(torch.load(model_path, map_location=Config.DEVICE))
+    except Exception as e:
+        print(f"❌ Model Load Error: {e}")
+        print("   -> 모델 구조(Hidden Size 등)가 저장된 가중치와 맞는지 확인하세요.")
+        return
+        
     model.eval()
     
-    # 2. Load Test Data
+    # 3. Load Data
     test_ds = SoccerTestDataset(Config.TEST_DIR)
+    if len(test_ds) == 0:
+        print("❌ 테스트할 데이터가 없어서 종료합니다.")
+        return
+
     test_loader = DataLoader(test_ds, batch_size=Config.BATCH_SIZE, shuffle=False, 
                              collate_fn=test_collate_fn, num_workers=Config.NUM_WORKERS)
     
@@ -245,11 +257,11 @@ def run_inference():
             preds = model(padded_phases, phase_lengths, episode_lengths, 
                           start_action_ids, phase_len_ids, padded_coords)
             
-            # De-normalize (0~1 -> Real Scale)
+            # De-normalize
             pred_x = preds[:, 0].cpu().numpy() * Config.MAX_X
             pred_y = preds[:, 1].cpu().numpy() * Config.MAX_Y
             
-            # 경기장 범위 내로 클리핑 (옵션)
+            # Clipping
             pred_x = np.clip(pred_x, 0, Config.MAX_X)
             pred_y = np.clip(pred_y, 0, Config.MAX_Y)
             
@@ -260,15 +272,20 @@ def run_inference():
                     'end_y': pred_y[i]
                 })
     
-    # 3. Save Submission
+    # 4. Save Submission
+    if len(results) == 0:
+        print("❌ 생성된 결과가 없습니다. 데이터 로딩 부분을 확인하세요.")
+        return
+
     submission_df = pd.DataFrame(results)
     
-    # sample_submission 순서에 맞게 정렬 (권장)
-    # submission_df = submission_df.sort_values('game_episode')
+    # 컬럼 순서 강제 지정 (혹시 모를 오류 방지)
+    submission_df = submission_df[['game_episode', 'end_x', 'end_y']]
     
     submission_df.to_csv(Config.OUTPUT_FILE, index=False)
-    print(f"✅ Saved submission to {Config.OUTPUT_FILE}")
+    print(f"✅ Successfully saved submission to {Config.OUTPUT_FILE}")
     print(f"📊 Total Predictions: {len(submission_df)}")
+    print("   (파일을 열어 데이터가 잘 들어갔는지 확인하세요!)")
 
 if __name__ == "__main__":
     run_inference()
