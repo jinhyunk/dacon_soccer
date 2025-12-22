@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126460,1,17,1151.833,4644,529335,556,Clearance,,34.78660500000001,48.553904,55.42225500000001,48.6897,False,126460_17,126460_27

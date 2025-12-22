@@ -1,0 +1,3 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126337,2,95,2817.933,4657,250167,2703,Aerial Clearance,Successful,2.611014,33.874675999999994,2.611014,33.874675999999994,True,126337_95,126337_287
+126337,2,95,2823.367,2353,356622,2711,Recovery,,86.07522,50.187944,86.07522,50.187944,False,126337_95,126337_290

@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126332,1,41,2862.4010000000003,4648,62386,1416,Carry,,43.94985,15.522427999999998,48.72504,16.866312,True,126332_41,126332_97

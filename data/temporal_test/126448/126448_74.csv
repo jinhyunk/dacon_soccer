@@ -1,0 +1,3 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126448,2,74,2066.3,2354,142109,2072,Goal Kick,Successful,4.815825000000004,33.15999600000001,5.123328000000001,47.170172,False,126448_74,126448_223
+126448,2,74,2075.7,2354,250036,2083,Pass,Successful,6.344268,49.550172,2.239418999999998,39.827192,False,126448_74,126448_225

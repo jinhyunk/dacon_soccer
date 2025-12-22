@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126427,1,39,2809.9,4641,145831,1541,Clearance,,11.36562,43.80253999999999,33.722325,46.141468,True,126427_39,126427_88

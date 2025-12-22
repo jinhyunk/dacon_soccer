@@ -1,0 +1,3 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126416,2,62,2279.188,4657,500478,2686,Carry,,56.986965000000005,60.627576,64.577415,59.709576,True,126416_62,126416_216
+126416,2,62,2353.0330000000004,4643,528960,2741,Tackle,Successful,60.354525,53.151928,60.354525,53.151928,False,126416_62,126416_223

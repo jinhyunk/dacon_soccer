@@ -1,0 +1,3 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126341,2,62,1189.6,4641,250957,2025,Parry,,0.646086,36.900676,0.646086,36.900676,True,126341_62,126341_228
+126341,2,62,1189.6,4641,250957,2024,Aerial Clearance,Successful,0.646086,36.900676,0.646086,36.900676,True,126341_62,126341_228

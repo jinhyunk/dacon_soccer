@@ -1,0 +1,3 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126360,1,34,2671.467,4639,354806,1467,Shot,Low Quality Shot,84.019635,29.70818,96.200013,46.87988,False,126360_34,126360_117
+126360,1,34,2672.867,4220,77715,1470,Clearance,,8.799987,21.12012,22.683045,14.322499999999998,True,126360_34,126360_118

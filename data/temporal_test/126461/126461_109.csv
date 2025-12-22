@@ -1,0 +1,3 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126461,2,109,3060.467000000001,4640,222332,2894,Aerial Clearance,Successful,4.5467100000000045,37.148536,4.5467100000000045,37.148536,False,126461_109,126461_31
+126461,2,109,3066.0330000000004,4640,532188,2900,Pass,Successful,56.15547,54.307792,57.17649,33.453892,False,126461_109,126461_31

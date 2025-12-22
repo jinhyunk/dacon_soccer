@@ -1,0 +1,4 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126287,1,1,17.367,4643,500121,12,Duel,Successful,38.11269,53.194224,38.11269,53.194224,True,126287_1,126287_4
+126287,1,1,18.2505,4643,500121,15,Intervention,,37.475865,56.83168,37.475865,56.83168,True,126287_1,126287_4
+126287,1,1,32.3,4643,500121,29,Duel,Successful,92.31201,38.477596,93.993165,38.491876,True,126287_1,126287_8

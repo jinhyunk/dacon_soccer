@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126372,2,68,2484.367,4643,85175,2665,Goal Kick,Successful,5.4377715,34.8874,23.46435,52.31036,True,126372_68,126372_203

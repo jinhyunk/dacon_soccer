@@ -1,0 +1,3 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126470,2,51,486.7165000000002,4657,360391,1599,Intervention,,94.296825,34.926228,94.296825,34.926228,True,126470_51,126470_183
+126470,2,51,488.5999999999999,4657,360391,1601,Pass,Successful,90.715695,37.593868,87.842055,44.847156,True,126470_51,126470_183

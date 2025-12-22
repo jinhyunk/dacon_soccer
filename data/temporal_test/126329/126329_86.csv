@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126329,2,86,2332.867,4646,356599,2693,Throw-In,Successful,24.128265,68.0,26.25735,59.726168,False,126329_86,126329_254

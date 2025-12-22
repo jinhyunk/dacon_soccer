@@ -1,0 +1,3 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126462,1,24,1145.004,4646,356596,659,Recovery,,32.41623,57.558736,32.41623,57.558736,False,126462_24,126462_55
+126462,1,24,1146.8,2353,500565,663,Pass,Successful,67.79115,10.573524,72.82506,8.718075999999996,True,126462_24,126462_56

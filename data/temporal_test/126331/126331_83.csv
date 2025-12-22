@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126331,2,83,1614.8330000000003,316,286696,2020,Interception,,6.374392499999999,31.206832,6.374392499999999,31.206832,False,126331_83,126331_233

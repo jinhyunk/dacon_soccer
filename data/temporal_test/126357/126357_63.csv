@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126357,2,63,934.7670000000004,4641,346036,1926,Duel,Successful,76.738095,47.203764,76.738095,47.203764,False,126357_63,126357_209

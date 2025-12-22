@@ -1,0 +1,3 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126331,2,81,1495.1329999999998,4657,500476,1996,Clearance,,11.85072,33.33258,21.06573,42.237248,True,126331_81,126331_228
+126331,2,81,1503.433,4657,215807,2009,Pass,Successful,32.07708,26.424392,44.240175,10.87728,True,126331_81,126331_232

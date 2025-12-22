@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126408,2,47,146.0329999999999,4648,500140,1413,Pass_Freekick,Successful,28.06712999999999,6.223427999999998,24.76246499999999,23.293740000000007,False,126408_47,126408_117

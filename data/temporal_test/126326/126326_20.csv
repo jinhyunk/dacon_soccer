@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126326,1,20,1220.8,4220,354809,603,Recovery,,73.31457,47.313788,73.31457,47.313788,True,126326_20,126326_80

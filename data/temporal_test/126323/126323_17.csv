@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126323,1,17,796.9,4220,287282,487,Pass,Successful,19.87818,6.825296000000002,35.1624,2.587603999999999,True,126323_17,126323_40

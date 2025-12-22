@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126305,2,51,473.8000000000002,4643,500116,1674,Catch,,0.004396959,31.132236,0.004396959,31.132236,True,126305_51,126305_137

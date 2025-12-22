@@ -1,0 +1,2 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126470,2,75,1969.6670000000004,4657,500480,2252,Shot,On Target,87.547425,39.5624,100.3181025,34.589015999999994,True,126470_75,126470_263
