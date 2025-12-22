@@ -18,7 +18,7 @@ class Config:
     BATCH_SIZE = 256        
     LR = 0.001
     EPOCHS = 50
-    NUM_WORKERS = 0
+    NUM_WORKERS = 4
     
     # 데이터 상수
     MAX_X = 105.0
@@ -34,7 +34,7 @@ class Config:
     
     INPUT_SIZE = 5       # Phase LSTM Input
     PHASE_HIDDEN = 64
-    EPISODE_HIDDEN = 256
+    EPISODE_HIDDEN = 512
     DROPOUT = 0.3        
     
     TRAIN_DIR = './data/train'
@@ -254,7 +254,15 @@ def run_training():
         dropout=Config.DROPOUT
     ).to(Config.DEVICE)
     
-    optimizer = optim.Adam(model.parameters(), lr=Config.LR)
+    # [안정화 1] AdamW
+    optimizer = optim.AdamW(model.parameters(), lr=Config.LR, weight_decay=1e-4)
+    
+    # [안정화 2] Scheduler (CosineAnnealingWarmRestarts 추천)
+    # 전체 학습에서는 Local Minima 탈출을 위해 Cosine Annealing이 유리합니다.
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=10, T_mult=2, eta_min=1e-5
+    )
+    
     criterion = RealDistanceLoss(max_x=Config.MAX_X, max_y=Config.MAX_Y)
     
     best_dist_error = float('inf')
@@ -273,9 +281,13 @@ def run_training():
             
             loss = criterion(preds, batch[3])
             loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
             optimizer.step()
             train_loss += loss.item()
-            
+        
+        scheduler.step()
         avg_train = train_loss / len(train_loader)
         
         model.eval()
