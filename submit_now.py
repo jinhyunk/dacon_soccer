@@ -130,12 +130,18 @@ class SoccerTestDataset(Dataset):
             df = pd.read_csv(fpath)
             if len(df) < 1: return None 
             
+            # [수정] 학습 때와 맞추기 위해 마지막 행(예측 대상)을 제외
+            # 테스트 파일의 마지막 행은 예측해야 할 타겟(빈 값 또는 0)이므로 입력에서 제외해야 함
+            # 단, 데이터가 1줄밖에 없다면 히스토리가 없는 것이므로 예외 처리가 필요할 수 있음
+            if len(df) > 1:
+                df = df.iloc[:-1]
+            
             # [중요] NaN 방지: 데이터 읽자마자 결측치 0으로 채움
             df = df.fillna(0)
             
             if 'phase' not in df.columns:
                  df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
-
+                 
             sx = df['start_x'].values / Config.MAX_X
             sy = df['start_y'].values / Config.MAX_Y
             ex = df['end_x'].values / Config.MAX_X
