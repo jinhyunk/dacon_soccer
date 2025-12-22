@@ -1,0 +1,4 @@
+game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
+126331,2,68,885.933,4657,250172,1710,Throw-In,Successful,82.476135,68.0,91.34874,65.2677192,True,126331_68,15639
+126331,2,68,887.433,4657,500493,1711,Duel,Successful,91.34874,65.2677192,91.34874,65.2677192,True,126331_68,15639
+126331,2,68,888.4000000000001,4657,500493,1713,Pass,Unsuccessful,91.69776,67.3006744,83.312985,68.0,True,126331_68,15639
