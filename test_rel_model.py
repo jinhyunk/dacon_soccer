@@ -37,8 +37,8 @@ class Config:
     EPISODE_HIDDEN = 256
     DROPOUT = 0.3        
     
-    TRAIN_DIR = './data/train'
-    VAL_DIR = './data/val'
+    TRAIN_DIR = './data_test/train'
+    VAL_DIR = './data_test/val'
     WEIGHT_DIR = './weight'
 
 ACTION_TO_IDX = {
@@ -292,11 +292,11 @@ def run_training():
         
         print(f"   Train: {avg_train:.4f}m | Val: {avg_val:.4f}m")
         
-        # if avg_val < best_dist_error:
-        #     best_dist_error = avg_val
-        #     save_name = f"location_aware_dist{best_dist_error:.4f}m.pth"
-        #     torch.save(model.state_dict(), os.path.join(Config.WEIGHT_DIR, save_name))
-        #     print(f"   💾 Best Model Saved: {save_name}")
+        if avg_val < best_dist_error:
+            best_dist_error = avg_val
+            save_name = f"location_aware_best.pth"
+            torch.save(model.state_dict(), os.path.join(Config.WEIGHT_DIR, save_name))
+            print(f"   💾 Best Model Saved: {save_name}")
 
 if __name__ == "__main__":
     run_training()
