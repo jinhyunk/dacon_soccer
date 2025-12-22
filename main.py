@@ -34,8 +34,8 @@ class Config:
     EPISODE_HIDDEN = 256
     DROPOUT = 0.3        
     
-    TRAIN_DIR = './data_test/train'
-    VAL_DIR = './data_test/val'
+    TRAIN_DIR = './data/train'
+    VAL_DIR = './data/val'
     WEIGHT_DIR = './weight'
 
 ACTION_TO_IDX = {
