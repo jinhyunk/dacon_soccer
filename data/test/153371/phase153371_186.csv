@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153371,2,55,552.4680000000001,4639,250902,1802,Carry,,40.80258,40.174196,78.91884,43.58766,True,153371_55,153371_186
-1,153371,2,55,561.4670000000001,4639,250902,1803,Shot,Blocked,78.91884,43.58766,80.92507499999999,42.496192,True,153371_55,153371_186

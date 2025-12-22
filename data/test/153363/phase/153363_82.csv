@@ -1,4 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153363,1,36,2143.5,4220,354820,989,Duel,Successful,93.496095,41.10192,105.0,34.0,False,153363_36,153363_82
-1,153363,1,36,2141.6,4220,287282,988,Pass_Freekick,Successful,68.79306,35.598544,93.496095,41.10192,False,153363_36,153363_82
-2,153363,1,36,2143.5,4220,354820,991,Shot,Low Quality Shot,93.496095,41.10192,103.2916185,42.639672,False,153363_36,153363_82

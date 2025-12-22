@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153381,2,82,2231.1680000000006,4220,500549,2398,Carry,,70.366485,53.761276,58.795275,53.722788,True,153381_82,153381_251
-1,153381,2,82,2229.933,4220,354809,2396,Throw-In,Successful,64.704675,68.0,70.366485,53.761276,True,153381_82,153381_251

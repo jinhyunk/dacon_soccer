@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153371,1,31,2019.167,2354,500145,1070,Interception,,43.42338,60.839192,62.62976999999999,67.297696,False,153371_31,153371_95
-1,153371,1,31,2019.167,2354,500145,1071,Pass,Unsuccessful,43.42338,60.839192,,,False,153371_31,153371_95

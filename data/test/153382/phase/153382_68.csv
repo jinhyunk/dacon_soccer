@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153382,1,27,1983.067,316,77579,1058,Recovery,,94.04514,41.277564,105.0,36.065845984,True,153382_27,153382_68
-1,153382,1,27,1983.067,316,77579,1059,Shot,On Target,94.04514,41.277564,105.0,36.065845984,True,153382_27,153382_68

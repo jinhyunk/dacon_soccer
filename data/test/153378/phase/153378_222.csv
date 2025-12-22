@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153378,2,76,1555.933,2353,526924,2326,Recovery,,24.2277,45.488396,24.2277,45.488396,True,153378_76,153378_222
-1,153378,2,76,1555.1000000000004,2353,526918,2325,Intervention,,26.118015,49.374188,26.118015,49.374188,True,153378_76,153378_222

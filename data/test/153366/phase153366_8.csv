@@ -1,2 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153366,1,10,591.567,2354,500145,329,Block,,21.94269,59.917996,21.94269,59.917996,False,153366_10,153366_8

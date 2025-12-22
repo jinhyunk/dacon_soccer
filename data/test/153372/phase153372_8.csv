@@ -1,2 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153372,1,10,442.8,4657,500478,197,Take-On,Unsuccessful,41.43069,63.0574676,41.43069,63.0574676,True,153372_10,153372_8

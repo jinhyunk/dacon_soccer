@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153376,1,19,1566.433,4646,250148,847,Block,,22.56702,7.660200000000003,22.56702,7.660200000000003,False,153376_19,153376_42
-1,153376,1,19,1567.667,4646,250148,848,Duel,Successful,24.09466500000001,10.151924,24.09466500000001,10.151924,False,153376_19,153376_42

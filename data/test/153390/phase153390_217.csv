@@ -1,4 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153390,2,65,1192.6,4640,533477,2012,Shot,Low Quality Shot,98.463015,35.64254,105.0,34.0,False,153390_65,153390_217
-1,153390,2,65,1192.6,4640,533477,2010,Duel,Successful,98.463015,35.64254,105.0,34.0,False,153390_65,153390_217
-2,153390,2,65,1190.7670000000005,4640,500430,2009,Pass_Corner,Successful,105.0,68.0,98.463015,35.64254,False,153390_65,153390_217

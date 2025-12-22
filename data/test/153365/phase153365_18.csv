@@ -1,2 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153365,1,13,526.2330000000001,4657,357150,318,Intervention,,14.196314999999998,46.856624,14.196314999999998,46.856624,False,153365_13,153365_18

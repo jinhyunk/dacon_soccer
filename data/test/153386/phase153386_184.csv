@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153386,1,5,286.367,4644,250076,174,Interception,,45.13383,58.888476,47.861625,55.697508,False,153386_5,153386_184
-1,153386,1,5,286.367,4644,250076,175,Pass,Successful,45.13383,58.888476,47.861625,55.697508,False,153386_5,153386_184

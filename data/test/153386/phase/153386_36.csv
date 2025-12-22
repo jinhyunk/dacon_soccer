@@ -1,2 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153386,1,2,108.533,4644,250076,64,Tackle,Unsuccessful,54.04161,53.5211,54.04161,53.5211,False,153386_2,153386_36

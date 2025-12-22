@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153373,2,95,2871.267,4646,250141,2713,Interception,,51.64761,7.553984,51.64761,7.553984,True,153373_95,153373_269
-1,153373,2,95,2871.267,4646,250141,2714,Clearance,,51.64761,7.553984,66.647175,12.482827999999998,True,153373_95,153373_269

@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153388,2,75,2599.3010000000004,2353,526926,2698,Carry,,42.89859,28.465412,47.645115,33.082884,True,153388_75,153388_350
-1,153388,2,75,2599.3,2353,526926,2697,Recovery,,42.89859,28.465412,42.89859,28.465412,True,153388_75,153388_350

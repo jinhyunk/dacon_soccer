@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153377,1,16,864.501,316,532201,467,Carry,,81.610725,44.547276,86.36859,45.343828,True,153377_16,153377_27
-1,153377,1,16,864.5,316,532201,465,Duel,Successful,81.610725,44.547276,81.610725,44.547276,True,153377_16,153377_27

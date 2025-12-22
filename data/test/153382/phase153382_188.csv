@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153382,2,50,670.8330000000001,316,500126,1837,Recovery,,82.10285999999999,28.494652,94.39143,31.53228,True,153382_50,153382_188
-1,153382,2,50,670.8330000000001,316,500126,1838,Shot,Blocked,82.10285999999999,28.494652,94.39143,31.53228,True,153382_50,153382_188

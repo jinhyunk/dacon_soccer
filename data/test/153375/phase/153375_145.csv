@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153375,2,46,425.7670000000003,4643,408792,1684,Duel,Successful,51.407895,60.984372,51.407895,60.984372,False,153375_46,153375_145
-1,153375,2,46,425.7670000000003,4643,408792,1685,Intervention,,51.407895,60.984372,51.407895,60.984372,False,153375_46,153375_145

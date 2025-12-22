@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153382,2,78,2381.733,2354,150851,2644,Duel,Successful,80.20257,35.864356,80.20257,35.864356,False,153382_78,153382_271
-1,153382,2,78,2381.733,2354,150851,2645,Recovery,,80.20257,35.864356,80.20257,35.864356,False,153382_78,153382_271

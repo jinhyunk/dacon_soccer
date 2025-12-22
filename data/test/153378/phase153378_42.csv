@@ -1,3 +1,0 @@
-,game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-0,153378,1,20,1040.233,2353,500573,502,Pass_Corner,Successful,105.0,68.0,92.07513,32.822036000000004,True,153378_20,153378_42
-1,153378,1,20,1042.3,2353,500576,504,Shot,Low Quality Shot,92.07513,32.822036000000004,74.464425,36.008312,True,153378_20,153378_42
