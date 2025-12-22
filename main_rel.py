@@ -34,7 +34,7 @@ class Config:
     
     INPUT_SIZE = 5       # Phase LSTM Input
     PHASE_HIDDEN = 64
-    EPISODE_HIDDEN = 512
+    EPISODE_HIDDEN = 256
     DROPOUT = 0.3        
     
     TRAIN_DIR = './data/train'
