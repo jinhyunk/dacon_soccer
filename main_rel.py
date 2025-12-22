@@ -285,7 +285,7 @@ def run_training():
         avg_train = train_loss / len(train_loader)
         
         model.eval()
-        val_loss = 0.0
+        val_dist_error = 0.0
         with torch.no_grad():
             for batch in val_loader:
                 batch = [b.to(Config.DEVICE) for b in batch]
