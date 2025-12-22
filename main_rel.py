@@ -151,12 +151,14 @@ class LocationAwareHierarchicalLSTM(nn.Module):
         # 1. Phase LSTM
         self.phase_input_dim = input_size + action_emb_dim + len_emb_dim
         self.phase_lstm = nn.LSTM(self.phase_input_dim, phase_hidden, num_layers=1, batch_first=True)
-        
+        self.ln_phase = nn.LayerNorm(phase_hidden)
+
         # 2. Episode LSTM (Input Size 증가!)
         # 입력: [Phase_Summary(64) + Phase_End_Coord(2)]
         self.episode_input_dim = phase_hidden + 2 
         self.episode_lstm = nn.LSTM(self.episode_input_dim, episode_hidden, num_layers=2, batch_first=True, dropout=dropout)
-        
+        self.ln_episode = nn.LayerNorm(episode_hidden)
+
         self.regressor = nn.Sequential(
             nn.Linear(episode_hidden, episode_hidden // 2),
             nn.ReLU(),
@@ -181,6 +183,8 @@ class LocationAwareHierarchicalLSTM(nn.Module):
         _, (phase_h_n, _) = self.phase_lstm(packed_phases)
         phase_embeddings = phase_h_n[-1] # (Total_Phases, Phase_Hidden)
         
+        phase_embeddings = self.ln_phase(phase_embeddings)
+        
         # --- B. Episode Level Preparation ---
         # 1. Phase Embedding을 Episode 단위로 다시 묶음
         phases_per_episode = torch.split(phase_embeddings, episode_lengths.tolist())
@@ -196,12 +200,13 @@ class LocationAwareHierarchicalLSTM(nn.Module):
         packed_episodes = pack_padded_sequence(episode_inputs, episode_lengths.cpu(), batch_first=True, enforce_sorted=False)
         _, (episode_h_n, _) = self.episode_lstm(packed_episodes)
         
-        # --- D. Residual Prediction ---
-        # 모델은 "마지막 Phase가 끝난 지점"에서 "얼마나 더 가는지"를 예측
-        predicted_remaining_delta = self.regressor(episode_h_n[-1])
+        episode_rep = episode_h_n[-1]
         
-        # 마지막 Phase의 실제 끝 위치 추출 (Batch, 2)
-        # padded_coords에서 각 배치의 마지막 유효한 값 가져오기
+        # [NEW] LayerNorm 적용
+        episode_rep = self.ln_episode(episode_rep)
+        
+        predicted_remaining_delta = self.regressor(episode_rep)
+        
         batch_size = padded_coords.size(0)
         last_coords = []
         for i in range(batch_size):
