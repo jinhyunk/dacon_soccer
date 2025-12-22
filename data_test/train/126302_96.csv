@@ -1,3 +1,0 @@
-game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-126302,2,96,3448.867,4646,250148,2994,Throw-In,Successful,35.4543,0.0,33.805275,5.388523999999997,True,126302_96,6589
-126302,2,96,3451.233,4646,109160,2996,Pass,Unsuccessful,34.20711,4.108423999999999,32.886,1.816416000000004,True,126302_96,6589

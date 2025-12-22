@@ -2,8 +2,8 @@ import os
 from tqdm import tqdm 
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from utils import * 
-from model import * 
+from trashcan.utils import * 
+from trashcan.model import * 
 
 class Config:
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

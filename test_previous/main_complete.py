@@ -6,8 +6,8 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 
 # 작성해주신 utils.py와 model.py에서 클래스들을 불러옵니다.
-from utils import * 
-from model import * 
+from trashcan.utils import * 
+from trashcan.model import * 
 # ==========================================
 # 1. 설정 (Configuration)
 # ==========================================

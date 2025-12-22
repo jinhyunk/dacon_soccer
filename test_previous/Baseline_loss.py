@@ -8,7 +8,7 @@ import numpy as np
 import glob
 import os
 from tqdm import tqdm
-from model import * # --- 1. 설정 (Hyperparameters) ---
+from trashcan.model import * # --- 1. 설정 (Hyperparameters) ---
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 

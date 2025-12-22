@@ -1,3 +1,0 @@
-game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-126292,2,82,1523.0330000000004,4657,250167,2025,Goal Kick,Successful,5.182747500000005,39.367852,18.541635,53.050268,False,126292_82,3312
-126292,2,82,1525.6670000000004,4657,62633,2027,Pass,Successful,19.4418,52.362924,31.06299,47.821408,False,126292_82,3312

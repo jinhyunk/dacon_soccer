@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from utils import * 
-from model import *
+from trashcan.utils import * 
+from trashcan.model import *
 # ==========================================
 # [NEW] RealDistanceLoss 정의
 # ==========================================
