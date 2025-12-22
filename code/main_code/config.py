@@ -7,7 +7,7 @@ import torch
 # 경로 설정
 # =========================
 TRAIN_PATH = "../../data/phase_train.csv"
-TEST_META_PATH = "../../data/test.csv"
+TEST_META_PATH = "../../data/temporal_test.csv"
 SAMPLE_SUB_PATH = "../../data/sample_submission.csv"
 TEAM_MODEL_DIR = "../../data/team_models"
 PRETRAIN_MODEL_PATH = "../../data/team_models/pretrain.pth"
