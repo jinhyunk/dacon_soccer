@@ -1,2 +1,5 @@
 
 doc/
+
+*.pyc
+__pycache__/
