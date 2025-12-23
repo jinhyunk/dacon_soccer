@@ -1,6 +1,5 @@
 import os
 import glob
-import re
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -16,7 +15,7 @@ class Config:
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     BATCH_SIZE = 256
-    NUM_WORKERS = 0 # 안전성을 위해 0 설정
+    NUM_WORKERS = 4 
     
     MAX_X = 105.0
     MAX_Y = 68.0
@@ -31,13 +30,13 @@ class Config:
     
     INPUT_SIZE = 5          
     PHASE_HIDDEN = 64
-    EPISODE_HIDDEN = 256    # [체크] 학습시 사용한 Hidden Size (256 또는 512)
+    EPISODE_HIDDEN = 256
     DROPOUT = 0.0           
     
-    TEST_DIR = './open_track1/test' 
+    # [설정] Adversarial Validation Set 경로 지정
+    VAL_DIR = './data_test/val' 
     WEIGHT_DIR = './weights'
-    MODEL_NAME = 'main_last.pth' # 사용하려는 모델 파일명 확인!
-    OUTPUT_FILE = './submission.csv'
+    MODEL_NAME = 'main_best.pth' # 검증할 모델 파일명
 
 ACTION_TO_IDX = {
     'Aerial Clearance': 0, 'Block': 1, 'Carry': 2, 'Catch': 3, 'Clearance': 4,
@@ -49,9 +48,10 @@ ACTION_TO_IDX = {
     'Shot_Corner': 27, 'Shot_Freekick': 28, 'Tackle': 29, 'Take-On': 30,
     'Throw-In': 31, 'Other': 32
 }
+DEFAULT_ACTION_IDX = 32
 
 # ==========================================
-# 1. Model Definition (LayerNorm 없는 버전)
+# 1. Model Definition
 # ==========================================
 class LocationAwareHierarchicalLSTM(nn.Module):
     def __init__(self, input_size=5, phase_hidden=64, episode_hidden=256, output_size=2, dropout=0.3,
@@ -107,46 +107,51 @@ class LocationAwareHierarchicalLSTM(nn.Module):
         return last_known_pos + predicted_remaining_delta
 
 # ==========================================
-# 2. Robust Test Dataset
+# 2. Validation Dataset (Location Aware)
 # ==========================================
-class SoccerTestDataset(Dataset):
+class SoccerValDataset(Dataset):
     def __init__(self, data_dir):
-        # 모든 하위 폴더의 csv 검색
-        self.file_paths = glob.glob(os.path.join(data_dir, '**', '*.csv'), recursive=True)
+        # Validation 폴더의 csv 로드
+        self.file_paths = glob.glob(os.path.join(data_dir, '*.csv'))
         self.action_map = ACTION_TO_IDX
         if len(self.file_paths) == 0:
             print(f"⚠️  No csv files found in {data_dir}")
         else:
-            print(f"📂 Found {len(self.file_paths)} test files.")
+            print(f"📂 Found {len(self.file_paths)} validation files.")
     
     def __len__(self): return len(self.file_paths)
     
     def __getitem__(self, idx):
         try:
             fpath = self.file_paths[idx]
-            file_name = os.path.basename(fpath)
-            game_episode_id = os.path.splitext(file_name)[0]
-            
             df = pd.read_csv(fpath)
-            if len(df) < 1: return None 
             
-            # [수정] 학습 때와 맞추기 위해 마지막 행(예측 대상)을 제외
-            # 테스트 파일의 마지막 행은 예측해야 할 타겟(빈 값 또는 0)이므로 입력에서 제외해야 함
-            # 단, 데이터가 1줄밖에 없다면 히스토리가 없는 것이므로 예외 처리가 필요할 수 있음
-            if len(df) > 1:
-                df = df.iloc[:-1]
+            # [중요] Validation은 정답(Target)이 존재함!
+            # 마지막 행이 정답임.
+            if len(df) < 2: return None 
             
-            # [중요] NaN 방지: 데이터 읽자마자 결측치 0으로 채움
-            df = df.fillna(0)
+            # 정답 추출 (마지막 행의 end_x, end_y)
+            target_row = df.iloc[-1]
+            target_ex = target_row['end_x'] / Config.MAX_X
+            target_ey = target_row['end_y'] / Config.MAX_Y
+            target = np.array([target_ex, target_ey], dtype=np.float32)
             
-            if 'phase' not in df.columns:
-                 df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
+            # "마지막 패스의 시작점"이 곧 모델의 예측 시작점(last_known_pos)이 되어야 함
+            target_start_x = target_row['start_x'] / Config.MAX_X
+            target_start_y = target_row['start_y'] / Config.MAX_Y
+            
+            # 입력 데이터는 마지막 행 제외
+            input_df = df.iloc[:-1].copy()
+            input_df = input_df.fillna(0)
+            
+            if 'phase' not in input_df.columns:
+                 input_df['phase'] = (input_df['team_id'] != input_df['team_id'].shift(1)).fillna(0).cumsum()
                  
-            sx = df['start_x'].values / Config.MAX_X
-            sy = df['start_y'].values / Config.MAX_Y
-            ex = df['end_x'].values / Config.MAX_X
-            ey = df['end_y'].values / Config.MAX_Y
-            t  = df['time_seconds'].values / Config.MAX_TIME
+            sx = input_df['start_x'].values / Config.MAX_X
+            sy = input_df['start_y'].values / Config.MAX_Y
+            ex = input_df['end_x'].values / Config.MAX_X
+            ey = input_df['end_y'].values / Config.MAX_Y
+            t  = input_df['time_seconds'].values / Config.MAX_TIME
             
             dx = ex - sx
             dy = ey - sy
@@ -156,31 +161,35 @@ class SoccerTestDataset(Dataset):
             phases_data, start_actions, phase_lens = [], [], []
             phase_end_coords = []
             
-            for _, group in df.groupby('phase', sort=False):
+            for _, group in input_df.groupby('phase', sort=False):
                 p_feats = input_features[group.index]
                 eos = np.full((1, 5), Config.EOS_VALUE)
                 phases_data.append(torch.FloatTensor(np.vstack([p_feats, eos])))
                 
                 act_name = group.iloc[0]['type_name']
-                start_actions.append(self.action_map.get(act_name, 32))
+                start_actions.append(self.action_map.get(act_name, DEFAULT_ACTION_IDX))
                 phase_lens.append(min(len(group), Config.MAX_PHASE_LEN_EMBED - 1))
                 
                 last_x = group.iloc[-1]['end_x'] / Config.MAX_X
                 last_y = group.iloc[-1]['end_y'] / Config.MAX_Y
                 phase_end_coords.append([last_x, last_y])
 
-            if not phases_data: return None
-            
-            return (phases_data, start_actions, phase_lens, torch.FloatTensor(phase_end_coords), game_episode_id)
+            # [핵심] 마지막 Phase 끝 좌표를 정답 패스의 시작점으로 교체 (Test 로직과 동일)
+            if len(phase_end_coords) > 0:
+                phase_end_coords[-1] = [target_start_x, target_start_y]
+            else:
+                phase_end_coords.append([target_start_x, target_start_y])
+                return None
+
+            return (phases_data, start_actions, phase_lens, torch.FloatTensor(phase_end_coords), torch.FloatTensor(target))
         except Exception as e:
-            print(f"Error: {e}")
             return None
 
-def test_collate_fn(batch):
+def val_collate_fn(batch):
     batch = [x for x in batch if x is not None]
     if not batch: return (None,)*6
     
-    b_phases, b_acts, b_lens, b_coords, b_ids = zip(*batch)
+    b_phases, b_acts, b_lens, b_coords, b_targets = zip(*batch)
     
     all_phases, all_acts, all_lens_ids, ep_lens = [], [], [], []
     for i in range(len(b_phases)):
@@ -198,12 +207,14 @@ def test_collate_fn(batch):
     coords_list = [torch.FloatTensor(c) for c in b_coords]
     padded_coords = pad_sequence(coords_list, batch_first=True, padding_value=0.0)
     
-    return pad_phases, phase_lengths, episode_lengths, start_action_ids, phase_len_ids, padded_coords, b_ids
+    targets = torch.stack(b_targets)
+    
+    return pad_phases, phase_lengths, episode_lengths, start_action_ids, phase_len_ids, padded_coords, targets
 
 # ==========================================
-# 3. Inference Engine
+# 3. Validation Logic
 # ==========================================
-def run_inference():
+def run_validation():
     print(f"✅ Device: {Config.DEVICE}")
     
     model_path = os.path.join(Config.WEIGHT_DIR, Config.MODEL_NAME)
@@ -216,7 +227,8 @@ def run_inference():
         input_size=Config.INPUT_SIZE,
         phase_hidden=Config.PHASE_HIDDEN,
         episode_hidden=Config.EPISODE_HIDDEN,
-        dropout=Config.DROPOUT
+        dropout=Config.DROPOUT,
+        num_actions=Config.NUM_ACTIONS
     ).to(Config.DEVICE)
     
     print(f"🔄 Loading model from {model_path}...")
@@ -224,20 +236,24 @@ def run_inference():
         model.load_state_dict(torch.load(model_path, map_location=Config.DEVICE))
     except Exception as e:
         print(f"❌ Model Load Fail: {e}")
-        print("   -> Tip: 학습된 모델과 Inference 모델의 Hidden Size나 구조가 같은지 확인하세요.")
         return
         
     model.eval()
     
-    test_ds = SoccerTestDataset(Config.TEST_DIR)
-    test_loader = DataLoader(test_ds, batch_size=Config.BATCH_SIZE, shuffle=False, 
-                             collate_fn=test_collate_fn, num_workers=Config.NUM_WORKERS)
+    val_ds = SoccerValDataset(Config.VAL_DIR)
+    val_loader = DataLoader(val_ds, batch_size=Config.BATCH_SIZE, shuffle=False, 
+                             collate_fn=val_collate_fn, num_workers=Config.NUM_WORKERS)
     
-    results = []
+    total_dist_error = 0.0
+    count = 0
     
-    print("🚀 Starting Inference...")
+    print("🚀 Starting Validation...")
+    
+    # 거리 오차 계산용
+    mse_criterion = nn.MSELoss() 
+    
     with torch.no_grad():
-        for batch in tqdm(test_loader, desc="Predicting"):
+        for batch in tqdm(val_loader, desc="Validating"):
             if batch[0] is None: continue
             
             padded_phases = batch[0].to(Config.DEVICE)
@@ -246,42 +262,36 @@ def run_inference():
             start_action_ids = batch[3].to(Config.DEVICE)
             phase_len_ids = batch[4].to(Config.DEVICE)
             padded_coords = batch[5].to(Config.DEVICE)
-            ids = batch[6]
+            targets = batch[6].to(Config.DEVICE) # (Batch, 2) Normalized
             
+            # Forward
             preds = model(padded_phases, phase_lengths, episode_lengths, 
                           start_action_ids, phase_len_ids, padded_coords)
             
-            pred_x = preds[:, 0].cpu().numpy() * Config.MAX_X
-            pred_y = preds[:, 1].cpu().numpy() * Config.MAX_Y
+            # --- Metric Calculation (Real Meters) ---
+            # Denormalize Predictions
+            pred_x = preds[:, 0] * Config.MAX_X
+            pred_y = preds[:, 1] * Config.MAX_Y
             
-            # [중요] NaN 값 처리 (NaN이면 경기장 중앙 50, 34로 대체)
-            if np.isnan(pred_x).any() or np.isnan(pred_y).any():
-                print("⚠️ Warning: NaN detected in predictions. Filling with center coords.")
-                pred_x = np.nan_to_num(pred_x, nan=52.5)
-                pred_y = np.nan_to_num(pred_y, nan=34.0)
-
-            pred_x = np.clip(pred_x, 0, Config.MAX_X)
-            pred_y = np.clip(pred_y, 0, Config.MAX_Y)
+            # Denormalize Targets
+            target_x = targets[:, 0] * Config.MAX_X
+            target_y = targets[:, 1] * Config.MAX_Y
             
-            for i, game_ep_id in enumerate(ids):
-                results.append({
-                    'game_episode': game_ep_id,
-                    'end_x': float(pred_x[i]), # float 형변환 명시
-                    'end_y': float(pred_y[i])
-                })
-    
-    # 4. Save Submission
-    submission_df = pd.DataFrame(results)
-    
-    # 데이터 확인용 출력
-    print("\n🔍 [Check] First 5 predictions:")
-    print(submission_df.head())
-    
-    # 필수 컬럼 순서 지정
-    submission_df = submission_df[['game_episode', 'end_x', 'end_y']]
-    
-    submission_df.to_csv(Config.OUTPUT_FILE, index=False)
-    print(f"\n✅ Saved submission to {Config.OUTPUT_FILE} (Rows: {len(submission_df)})")
+            # Euclidean Distance
+            diff_x = pred_x - target_x
+            diff_y = pred_y - target_y
+            dist_error = torch.sqrt(diff_x**2 + diff_y**2)
+            
+            total_dist_error += dist_error.sum().item()
+            count += preds.size(0)
+            
+    if count > 0:
+        avg_dist_error = total_dist_error / count
+        print(f"\n📊 Validation Result (Adversarial Set)")
+        print(f"   - Total Samples: {count}")
+        print(f"   - Mean Distance Error: {avg_dist_error:.4f} m")
+    else:
+        print("⚠️ No valid samples found.")
 
 if __name__ == "__main__":
-    run_inference()
+    run_validation()

@@ -1,3 +1,0 @@
-game_id,period_id,episode_id,time_seconds,team_id,player_id,action_id,type_name,result_name,start_x,start_y,end_x,end_y,is_home,game_episode,phase
-126329,2,92,2624.5,4646,356599,2854,Pass_Corner,Successful,105.0,68.0,97.7067,36.651932,False,126329_92,15113
-126329,2,92,2626.133,4646,61645,2856,Pass,Unsuccessful,97.7067,36.651932,100.18617,35.611872,False,126329_92,15113
