@@ -13,6 +13,9 @@ Usage:
     
     # infer_mode 직접 지정
     python infer.py --eval --infer_mode=episode_phase
+    
+    # Team-wise 모드 추론 (마지막 행의 team_id와 같은 데이터만 사용)
+    python infer.py --eval --infer_mode=episode_team --team_model_dir=../data/trans_team_models
 """
 import os
 import argparse
@@ -131,6 +134,7 @@ def get_infer_mode_from_model_path(model_path: str) -> str:
     - episode -> episode (전체 episode 사용)
     - episode_phase -> episode_phase (같은 phase만 사용)
     - pretrain_finetune -> episode (전체 episode 사용)
+    - team_wise -> episode_team (같은 team_id만 사용)
     """
     mode_info_path = model_path.replace(".pth", "_mode.txt")
     
@@ -141,11 +145,70 @@ def get_infer_mode_from_model_path(model_path: str) -> str:
         # data_mode에 따른 infer_mode 매핑
         if data_mode == "episode_phase":
             return "episode_phase"
+        elif data_mode == "team_wise":
+            return "episode_team"
         else:
             return "episode"
     
     # mode 파일이 없으면 기본값
     return "episode"
+
+
+def load_team_models(
+    team_model_dir: str,
+    model_type: str = "encoder",
+    pretrained_model_name: str = None,
+) -> dict:
+    """
+    team_model_dir에서 모든 team 모델 로드
+    
+    Returns:
+        team_id -> model 딕셔너리
+    """
+    team_models = {}
+    
+    if not os.path.exists(team_model_dir):
+        print(f"[WARN] Team model dir not found: {team_model_dir}")
+        return team_models
+    
+    for fname in os.listdir(team_model_dir):
+        if fname.startswith("team_") and fname.endswith(".pth"):
+            team_id = int(fname.replace("team_", "").replace(".pth", ""))
+            model_path = os.path.join(team_model_dir, fname)
+            
+            model = load_model(
+                model_path=model_path,
+                model_type=model_type,
+                pretrained_model_name=pretrained_model_name,
+            )
+            model.eval()
+            team_models[team_id] = model
+    
+    print(f"Loaded {len(team_models)} team models from {team_model_dir}")
+    return team_models
+
+
+def predict_single_episode_team_wise(
+    team_models: dict,
+    use_df: pd.DataFrame,
+    default_model: torch.nn.Module = None,
+) -> Tuple[float, float]:
+    """
+    Team-wise 모델로 단일 episode 예측
+    
+    마지막 행의 team_id에 해당하는 모델을 선택하여 예측
+    """
+    last_team_id = int(use_df.iloc[-1]["team_id"])
+    
+    if last_team_id in team_models:
+        model = team_models[last_team_id]
+    elif default_model is not None:
+        model = default_model
+    else:
+        # 모델이 없으면 필드 중앙값 반환
+        return FIELD_X / 2, FIELD_Y / 2
+    
+    return predict_single_episode(model, use_df)
 
 
 def predict_single_episode(
@@ -179,15 +242,18 @@ def evaluate_temporal_test(
     infer_mode: str = "episode",
     meta_path: str = TEMPORAL_TEST_META_PATH,
     data_root: str = TEMPORAL_TEST_DATA_ROOT,
+    team_models: dict = None,
 ) -> float:
     """
     temporal_test 데이터에 대해 추론 후 정답과 비교
     
     Args:
-        model: 학습된 모델
+        model: 학습된 모델 (single 모델 또는 default fallback)
         infer_mode: 
             - "episode": 전체 episode 데이터 사용
             - "episode_phase": 마지막 행과 같은 phase 데이터만 사용
+            - "episode_team": 마지막 행과 같은 team_id 데이터만 사용
+        team_models: team_id -> model 딕셔너리 (team_wise 모드 시 사용)
     """
     print(f"\n========== Temporal Test Evaluation ==========")
     print(f"Inference mode: {infer_mode}")
@@ -229,7 +295,14 @@ def evaluate_temporal_test(
         
         # 예측
         try:
-            pred_x_val, pred_y_val = predict_single_episode(model, use_df)
+            if team_models is not None:
+                # Team-wise 모드
+                pred_x_val, pred_y_val = predict_single_episode_team_wise(
+                    team_models, use_df, default_model=model
+                )
+            else:
+                # Single 모델 모드
+                pred_x_val, pred_y_val = predict_single_episode(model, use_df)
         except Exception as e:
             print(f"Error predicting {row['game_episode']}: {e}")
             skipped += 1
@@ -273,9 +346,13 @@ def run_inference_for_submission(
     test_meta_path: str = REAL_TEST_META_PATH,
     data_root: str = REAL_TEST_DATA_ROOT,
     submit_path: str = SUBMIT_PATH,
+    team_models: dict = None,
 ) -> None:
     """
     실제 테스트 데이터에 대해 추론 수행 및 제출 파일 생성
+    
+    Args:
+        team_models: team_id -> model 딕셔너리 (team_wise 모드 시 사용)
     
     Args:
         model: 학습된 모델
@@ -326,7 +403,14 @@ def run_inference_for_submission(
         
         # 예측
         try:
-            pred_x, pred_y = predict_single_episode(model, use_df)
+            if team_models is not None:
+                # Team-wise 모드
+                pred_x, pred_y = predict_single_episode_team_wise(
+                    team_models, use_df, default_model=model
+                )
+            else:
+                # Single 모델 모드
+                pred_x, pred_y = predict_single_episode(model, use_df)
         except Exception as e:
             print(f"Error predicting {game_episode}: {e}")
             pred_x, pred_y = 52.5, 34.0
@@ -382,8 +466,14 @@ def parse_args():
         "--infer_mode",
         type=str,
         default=None,
-        choices=["episode", "episode_phase"],
+        choices=["episode", "episode_phase", "episode_team"],
         help="추론 모드 (미지정 시 학습 때 저장된 mode 파일에서 자동 결정)"
+    )
+    parser.add_argument(
+        "--team_model_dir",
+        type=str,
+        default="../data/trans_team_models",
+        help="Team-wise 모델 디렉토리 (team_wise 모드에서 사용)"
     )
     
     return parser.parse_args()
@@ -394,14 +484,6 @@ def main():
     
     log_device()
     
-    # 모델 로드
-    if not os.path.exists(args.model_path):
-        print(f"Model not found: {args.model_path}")
-        print("Please run train.py first.")
-        return
-    
-    model = load_model(args.model_path, args.model_type, args.pretrained_model_name)
-    
     # infer_mode 결정
     if args.infer_mode is not None:
         infer_mode = args.infer_mode
@@ -410,15 +492,53 @@ def main():
         infer_mode = get_infer_mode_from_model_path(args.model_path)
         print(f"Auto-detected infer_mode from training: {infer_mode}")
     
+    # Team-wise 모드 체크
+    team_models = None
+    model = None
+    
+    # team_model_dir 에서 mode.txt 확인
+    team_mode_file = os.path.join(args.team_model_dir, "mode.txt")
+    is_team_wise = os.path.exists(team_mode_file) and infer_mode == "episode_team"
+    
+    if is_team_wise or (args.infer_mode == "episode_team" and os.path.exists(args.team_model_dir)):
+        # Team-wise 모드: 각 team별 모델 로드
+        print(f"\n========== Team-wise Mode ==========")
+        team_models = load_team_models(
+            args.team_model_dir,
+            model_type=args.model_type,
+            pretrained_model_name=args.pretrained_model_name,
+        )
+        infer_mode = "episode_team"
+        
+        if not team_models:
+            print("No team models loaded. Falling back to single model.")
+    else:
+        # Single 모델 모드
+        if not os.path.exists(args.model_path):
+            print(f"Model not found: {args.model_path}")
+            print("Please run train.py first.")
+            return
+        
+        model = load_model(args.model_path, args.model_type, args.pretrained_model_name)
+        model.eval()
+    
     # 둘 다 지정 안 했으면 기본으로 eval 수행
     if not args.eval and not args.submit:
         args.eval = True
     
     if args.eval:
-        evaluate_temporal_test(model, infer_mode=infer_mode)
+        evaluate_temporal_test(
+            model=model,
+            infer_mode=infer_mode,
+            team_models=team_models,
+        )
     
     if args.submit:
-        run_inference_for_submission(model, infer_mode=infer_mode)
+        run_inference_for_submission(
+            model=model,
+            infer_mode=infer_mode,
+            team_models=team_models,
+        )
 
 
 if __name__ == "__main__":

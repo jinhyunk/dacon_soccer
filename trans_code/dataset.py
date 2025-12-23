@@ -5,6 +5,8 @@ Dataset 및 시퀀스 생성 함수
 - episode: game_episode 기준으로 시퀀스 생성 (기본)
 - episode_phase: game_episode 내에서 phase별로 시퀀스 생성
 - phase: phase 기준으로 시퀀스 생성 (pretrain용)
+- team_id: (game_episode, team_id) 기준으로 시퀀스 생성 (pretrain용)
+- episode_team: team별 episode 시퀀스 (team-wise finetune용)
 """
 from typing import List, Tuple
 
@@ -219,12 +221,83 @@ def build_phase_sequences(
 
 
 # ==========================================
+# 학습용 시퀀스 생성 - team_id 기준 (pretrain용)
+# ==========================================
+
+def build_team_sequences(
+    df: pd.DataFrame,
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """
+    (game_episode, team_id) 기준으로 시퀀스 생성 (pretrain용)
+    main_code의 build_pretrain_sequences_by_team과 동일
+    """
+    episodes: List[np.ndarray] = []
+    targets: List[np.ndarray] = []
+
+    for _, g in tqdm(df.groupby(["game_episode", "team_id"]), desc="Building team sequences"):
+        g = g.sort_values("time_seconds").reset_index(drop=True)
+        if len(g) < 2:
+            continue
+
+        seq, target = _build_sequence_from_group(g)
+        episodes.append(seq)
+        targets.append(target)
+
+    print(f"[team_id mode] Total sequences: {len(episodes)}")
+    return episodes, targets
+
+
+# ==========================================
+# 학습용 시퀀스 생성 - team별 episode (finetune용)
+# ==========================================
+
+def build_episode_team_sequences(
+    df: pd.DataFrame,
+    team_id: int,
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """
+    episode 단위로 나눈 뒤,
+    각 episode 내에서 마지막 행의 team_id가 주어진 team_id인 경우만 사용.
+    해당 episode에서 마지막 행과 동일한 team_id의 데이터만 모아 시퀀스를 만듦.
+    
+    main_code의 build_episode_team_sequences와 동일
+    """
+    episodes: List[np.ndarray] = []
+    targets: List[np.ndarray] = []
+
+    for _, g in tqdm(df.groupby("game_episode"), desc=f"Building episode seq (team={team_id})"):
+        g = g.sort_values("time_seconds").reset_index(drop=True)
+        if len(g) < 2:
+            continue
+
+        last_row = g.iloc[-1]
+        last_team = last_row["team_id"]
+
+        # 이 episode의 마지막 행의 team_id가 우리가 학습하려는 team이 아니면 스킵
+        if last_team != team_id:
+            continue
+
+        # 같은 episode 내에서 마지막 행과 team_id가 같은 데이터만 사용
+        g_team = g[g["team_id"] == team_id].reset_index(drop=True)
+        if len(g_team) < 2:
+            continue
+
+        seq, target = _build_sequence_from_group(g_team)
+        episodes.append(seq)
+        targets.append(target)
+
+    print(f"[team {team_id}] episode sequences: {len(episodes)}")
+    return episodes, targets
+
+
+# ==========================================
 # 통합 시퀀스 빌더
 # ==========================================
 
 def build_train_sequences(
     df: pd.DataFrame,
     data_mode: str = "episode",
+    team_id: int = None,
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
     data_mode에 따라 다른 방식으로 시퀀스 생성
@@ -235,6 +308,8 @@ def build_train_sequences(
             - "episode": game_episode 기준 (기본)
             - "episode_phase": game_episode + phase 기준
             - "phase": phase 기준 (pretrain용)
+            - "team_id": (game_episode, team_id) 기준 (pretrain용)
+            - "episode_team": team별 episode 시퀀스 (team_id 필수)
     
     Returns:
         episodes, targets
@@ -245,8 +320,17 @@ def build_train_sequences(
         return build_episode_phase_sequences(df)
     elif data_mode == "phase":
         return build_phase_sequences(df)
+    elif data_mode == "team_id":
+        return build_team_sequences(df)
+    elif data_mode == "episode_team":
+        if team_id is None:
+            raise ValueError("data_mode='episode_team' requires team_id parameter.")
+        return build_episode_team_sequences(df, team_id)
     else:
-        raise ValueError(f"Unknown data_mode: {data_mode}. Use 'episode', 'episode_phase', or 'phase'.")
+        raise ValueError(
+            f"Unknown data_mode: {data_mode}. "
+            "Use 'episode', 'episode_phase', 'phase', 'team_id', or 'episode_team'."
+        )
 
 
 # ==========================================
@@ -300,6 +384,7 @@ def get_inference_dataframe(
         infer_mode:
             - "episode": 전체 episode 데이터 사용
             - "episode_phase": 마지막 행과 같은 phase 데이터만 사용
+            - "episode_team": 마지막 행과 같은 team_id 데이터만 사용
     
     Returns:
         추론에 사용할 데이터프레임
@@ -314,5 +399,16 @@ def get_inference_dataframe(
         if len(g_phase) < 2:
             return g
         return g_phase
+    elif infer_mode == "episode_team":
+        # 마지막 행의 team_id와 동일한 team_id 데이터만 사용
+        last_team = g.iloc[-1]["team_id"]
+        g_team = g[g["team_id"] == last_team].reset_index(drop=True)
+        # 데이터가 너무 적으면 전체 episode fallback
+        if len(g_team) < 2:
+            return g
+        return g_team
     else:
-        raise ValueError(f"Unknown infer_mode: {infer_mode}. Use 'episode' or 'episode_phase'.")
+        raise ValueError(
+            f"Unknown infer_mode: {infer_mode}. "
+            "Use 'episode', 'episode_phase', or 'episode_team'."
+        )

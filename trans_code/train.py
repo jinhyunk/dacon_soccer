@@ -8,8 +8,20 @@ Usage:
     # episode + phase 모드
     python train.py --data_mode=episode_phase
     
+    # phase 모드 (phase별로 시퀀스 생성)
+    python train.py --data_mode=phase
+    
+    # team_id 모드 ((game_episode, team_id) 별로 시퀀스 생성)
+    python train.py --data_mode=team_id
+    
     # phase pretrain + episode finetune 모드
     python train.py --data_mode=pretrain_finetune --pretrain_epochs=10 --finetune_epochs=20
+    
+    # team_id pretrain + episode finetune 모드
+    python train.py --data_mode=pretrain_finetune --pretrain_mode=team_id
+    
+    # Team-wise 학습 (main_code 방식: pretrain -> 각 team별 finetune)
+    python train.py --data_mode=team_wise --pretrain_mode=phase --pretrain_epochs=10 --finetune_epochs=20
     
     # 에폭 수 변경
     python train.py --epochs=50
@@ -66,8 +78,15 @@ def parse_args():
         "--data_mode",
         type=str,
         default="episode",
-        choices=["episode", "episode_phase", "pretrain_finetune"],
-        help="데이터 모드: 'episode' (기본), 'episode_phase', 'pretrain_finetune'"
+        choices=["episode", "episode_phase", "phase", "team_id", "pretrain_finetune", "team_wise"],
+        help="데이터 모드: 'episode', 'episode_phase', 'phase', 'team_id', 'pretrain_finetune', 'team_wise'"
+    )
+    parser.add_argument(
+        "--pretrain_mode",
+        type=str,
+        default="phase",
+        choices=["phase", "team_id"],
+        help="Pretrain 기준 (pretrain_finetune, team_wise 모드에서 사용): 'phase' 또는 'team_id'"
     )
     
     # 에폭 설정
@@ -319,18 +338,18 @@ def main():
     # =========================
     
     if args.data_mode == "pretrain_finetune":
-        # ========== Phase Pretrain + Episode Finetune ==========
+        # ========== Pretrain + Episode Finetune ==========
         print(f"\n{'='*50}")
-        print("Mode: Pretrain (phase) -> Finetune (episode)")
+        print(f"Mode: Pretrain ({args.pretrain_mode}) -> Finetune (episode)")
         print(f"{'='*50}")
         
-        # Step 1: Phase로 Pretrain
+        # Step 1: Pretrain (phase 또는 team_id)
         _, pretrain_state, pretrain_dist = train_single_mode(
             args=args,
             df=df,
-            data_mode="phase",
+            data_mode=args.pretrain_mode,
             epochs=args.pretrain_epochs,
-            desc="Pretrain (phase)",
+            desc=f"Pretrain ({args.pretrain_mode})",
             pretrain_state=None,
             use_wandb=use_wandb,
         )
@@ -350,6 +369,89 @@ def main():
             pretrain_state=pretrain_state,
             use_wandb=use_wandb,
         )
+        final_model_path = MODEL_PATH.replace(".pth", "_pretrain_finetune.pth")
+        
+    elif args.data_mode == "team_wise":
+        # ========== Team-wise Training (Pretrain + per-team Finetune) ==========
+        print(f"\n{'='*50}")
+        print(f"Mode: Pretrain ({args.pretrain_mode}) -> Team-wise Finetune")
+        print(f"{'='*50}")
+        
+        # Step 1: Pretrain (phase 또는 team_id)
+        _, pretrain_state, pretrain_dist = train_single_mode(
+            args=args,
+            df=df,
+            data_mode=args.pretrain_mode,
+            epochs=args.pretrain_epochs,
+            desc=f"Pretrain ({args.pretrain_mode})",
+            pretrain_state=None,
+            use_wandb=use_wandb,
+        )
+        print(f"\nPretrain finished. Best dist: {pretrain_dist:.4f}")
+        
+        # Pretrain 모델 저장
+        pretrain_path = MODEL_PATH.replace(".pth", "_pretrain.pth")
+        save_model(pretrain_state, pretrain_path)
+        
+        # Step 2: Team별 Finetune
+        team_model_dir = MODEL_DIR.replace("trans_models", "trans_team_models")
+        os.makedirs(team_model_dir, exist_ok=True)
+        
+        team_ids = sorted(df["team_id"].unique())
+        print(f"\nFound {len(team_ids)} teams: {team_ids}")
+        
+        for team_id in team_ids:
+            try:
+                from dataset import build_episode_team_sequences
+                episodes, targets = build_episode_team_sequences(df, int(team_id))
+                
+                if len(episodes) < 2:
+                    print(f"[team {team_id}] Skip: not enough data")
+                    continue
+                
+                train_loader, valid_loader = build_dataloaders(
+                    episodes, targets, batch_size=args.batch_size
+                )
+                
+                model, criterion, optimizer = create_model(
+                    model_type=args.model_type,
+                    d_model=args.d_model,
+                    nhead=args.nhead,
+                    num_layers=args.num_layers,
+                    dim_feedforward=DIM_FEEDFORWARD,
+                    dropout=DROPOUT,
+                    lr=args.lr,
+                    pretrain_state=pretrain_state,
+                    freeze_pretrained=args.freeze_pretrained,
+                    pretrained_model_name=args.pretrained_model_name,
+                )
+                
+                _, team_best_state, team_best_dist = train_loop(
+                    model=model,
+                    criterion=criterion,
+                    optimizer=optimizer,
+                    train_loader=train_loader,
+                    valid_loader=valid_loader,
+                    epochs=args.finetune_epochs,
+                    use_scheduler=not args.no_scheduler,
+                    early_stop_patience=args.patience,
+                    desc_prefix=f"[team {team_id}]",
+                    use_wandb=use_wandb,
+                )
+                
+                # 팀별 모델 저장
+                team_model_path = os.path.join(team_model_dir, f"team_{int(team_id)}.pth")
+                save_model(team_best_state, team_model_path)
+                print(f"[team {team_id}] Best dist: {team_best_dist:.4f}")
+                
+            except Exception as e:
+                print(f"[team {team_id}] Error: {e}")
+                continue
+        
+        # team_wise 모드의 경우 최종 모델 경로는 team_model_dir
+        final_model_path = team_model_dir
+        best_state = pretrain_state  # pretrain 모델을 대표로
+        best_dist = pretrain_dist
         
     else:
         # ========== Single Mode Training ==========
@@ -362,27 +464,38 @@ def main():
             pretrain_state=None,
             use_wandb=use_wandb,
         )
+        
+        # 모델 경로 결정
+        if args.data_mode == "episode":
+            final_model_path = MODEL_PATH
+        elif args.data_mode == "episode_phase":
+            final_model_path = MODEL_PATH.replace(".pth", "_epi_phase.pth")
+        elif args.data_mode == "phase":
+            final_model_path = MODEL_PATH.replace(".pth", "_phase.pth")
+        elif args.data_mode == "team_id":
+            final_model_path = MODEL_PATH.replace(".pth", "_team_id.pth")
+        else:
+            final_model_path = MODEL_PATH.replace(".pth", f"_{args.data_mode}.pth")
     
     # =========================
     # 최종 모델 저장
     # =========================
     print(f"\n========== Saving Model ==========")
     
-    # 모델 경로에 data_mode suffix 추가
-    if args.data_mode == "episode":
-        final_model_path = MODEL_PATH
-    elif args.data_mode == "episode_phase":
-        final_model_path = MODEL_PATH.replace(".pth", "_epi_phase.pth")
-    else:  # pretrain_finetune
-        final_model_path = MODEL_PATH.replace(".pth", "_pretrain_finetune.pth")
-    
-    save_model(best_state, final_model_path)
-    
-    # data_mode 정보를 별도 파일로 저장 (inference에서 사용)
-    mode_info_path = final_model_path.replace(".pth", "_mode.txt")
-    with open(mode_info_path, "w") as f:
-        f.write(args.data_mode)
-    print(f"Data mode info saved to: {mode_info_path}")
+    if args.data_mode != "team_wise":
+        save_model(best_state, final_model_path)
+        
+        # data_mode 정보를 별도 파일로 저장 (inference에서 사용)
+        mode_info_path = final_model_path.replace(".pth", "_mode.txt")
+        with open(mode_info_path, "w") as f:
+            f.write(args.data_mode)
+        print(f"Data mode info saved to: {mode_info_path}")
+    else:
+        # team_wise 모드는 모드 정보를 디렉토리에 저장
+        mode_info_path = os.path.join(final_model_path, "mode.txt")
+        with open(mode_info_path, "w") as f:
+            f.write("team_wise")
+        print(f"Team-wise models saved to: {final_model_path}")
     
     print(f"\n========== Training Complete ==========")
     print(f"Data mode: {args.data_mode}")
