@@ -1,6 +1,5 @@
 import os
 import glob
-import re
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -16,14 +15,14 @@ class Config:
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     BATCH_SIZE = 256
-    NUM_WORKERS = 0 # 안전성을 위해 0 설정
+    NUM_WORKERS = 0  # 윈도우 환경이라면 0 추천
     
     MAX_X = 105.0
     MAX_Y = 68.0
     MAX_TIME = 5700.0
     EOS_VALUE = 0.0 
     
-    # 모델 파라미터
+    # 모델 파라미터 (학습 설정과 동일해야 함)
     NUM_ACTIONS = 33
     MAX_PHASE_LEN_EMBED = 30
     ACTION_EMB_DIM = 4
@@ -31,14 +30,16 @@ class Config:
     
     INPUT_SIZE = 5          
     PHASE_HIDDEN = 64
-    EPISODE_HIDDEN = 256    # [체크] 학습시 사용한 Hidden Size (256 또는 512)
-    DROPOUT = 0.0           
+    EPISODE_HIDDEN = 256    
+    DROPOUT = 0.0           # Inference시에는 Dropout 안 씀 (eval 모드에서 자동 처리되지만 명시)
     
-    TEST_DIR = './open_track1/test' 
+    # [경로 설정]
+    TEST_DIR = './open_track1/test'   # 테스트 파일들이 들어있는 폴더
     WEIGHT_DIR = './weights'
-    MODEL_NAME = 'main_best.pth' # 사용하려는 모델 파일명 확인!
+    MODEL_NAME = 'main_best.pth'  # 'location_aware_last.pth' 도 가능
     OUTPUT_FILE = './submission.csv'
 
+# 학습 때와 동일한 Action Map
 ACTION_TO_IDX = {
     'Aerial Clearance': 0, 'Block': 1, 'Carry': 2, 'Catch': 3, 'Clearance': 4,
     'Cross': 5, 'Deflection': 6, 'Duel': 7, 'Error': 8, 'Foul': 9,
@@ -49,9 +50,10 @@ ACTION_TO_IDX = {
     'Shot_Corner': 27, 'Shot_Freekick': 28, 'Tackle': 29, 'Take-On': 30,
     'Throw-In': 31, 'Other': 32
 }
+DEFAULT_ACTION_IDX = 32
 
 # ==========================================
-# 1. Model Definition (LayerNorm 없는 버전)
+# 1. Model Definition
 # ==========================================
 class LocationAwareHierarchicalLSTM(nn.Module):
     def __init__(self, input_size=5, phase_hidden=64, episode_hidden=256, output_size=2, dropout=0.3,
@@ -104,14 +106,15 @@ class LocationAwareHierarchicalLSTM(nn.Module):
             last_coords.append(padded_coords[i, length-1, :])
         last_known_pos = torch.stack(last_coords)
         
+        # Inference에서는 last_known_pos를 반환할 필요 없음
         return last_known_pos + predicted_remaining_delta
 
 # ==========================================
-# 2. Robust Test Dataset
+# 2. Test Dataset (Location Aware Logic Applied)
 # ==========================================
 class SoccerTestDataset(Dataset):
     def __init__(self, data_dir):
-        # 모든 하위 폴더의 csv 검색
+        # 하위 폴더까지 검색
         self.file_paths = glob.glob(os.path.join(data_dir, '**', '*.csv'), recursive=True)
         self.action_map = ACTION_TO_IDX
         if len(self.file_paths) == 0:
@@ -125,18 +128,31 @@ class SoccerTestDataset(Dataset):
         try:
             fpath = self.file_paths[idx]
             file_name = os.path.basename(fpath)
+            # 파일명에서 game_episode_id 추출 (예: 'test_123.csv' -> 'test_123')
             game_episode_id = os.path.splitext(file_name)[0]
             
             df = pd.read_csv(fpath)
+            
+            # 데이터가 최소 1줄은 있어야 함
             if len(df) < 1: return None 
             
-            # [수정] 학습 때와 맞추기 위해 마지막 행(예측 대상)을 제외
-            # 테스트 파일의 마지막 행은 예측해야 할 타겟(빈 값 또는 0)이므로 입력에서 제외해야 함
-            # 단, 데이터가 1줄밖에 없다면 히스토리가 없는 것이므로 예외 처리가 필요할 수 있음
+            # [핵심 로직] 
+            # 테스트 파일의 '마지막 행'이 우리가 예측해야 할 이벤트입니다.
+            # 이 행의 'start_x, start_y'가 바로 'last_known_pos'가 되어야 합니다.
+            last_row = df.iloc[-1]
+            target_start_x = last_row['start_x'] / Config.MAX_X
+            target_start_y = last_row['start_y'] / Config.MAX_Y
+
+            # LSTM에 들어갈 History는 마지막 행(예측 대상)을 제외한 이전 기록들
             if len(df) > 1:
-                df = df.iloc[:-1]
+                df = df.iloc[:-1].copy()
+            else:
+                # 만약 데이터가 1줄밖에 없다면 히스토리가 없는 것임.
+                # 이 경우 로직 처리가 애매하지만, 일단 자기 자신을 히스토리로 넣거나 비워야 함.
+                # 여기서는 에러 방지를 위해 자기 자신을 그대로 둠 (단, 정답은 모름)
+                pass 
             
-            # [중요] NaN 방지: 데이터 읽자마자 결측치 0으로 채움
+            # NaN 처리
             df = df.fillna(0)
             
             if 'phase' not in df.columns:
@@ -162,23 +178,33 @@ class SoccerTestDataset(Dataset):
                 phases_data.append(torch.FloatTensor(np.vstack([p_feats, eos])))
                 
                 act_name = group.iloc[0]['type_name']
-                start_actions.append(self.action_map.get(act_name, 32))
+                start_actions.append(self.action_map.get(act_name, DEFAULT_ACTION_IDX))
                 phase_lens.append(min(len(group), Config.MAX_PHASE_LEN_EMBED - 1))
                 
+                # 히스토리 상의 마지막 좌표
                 last_x = group.iloc[-1]['end_x'] / Config.MAX_X
                 last_y = group.iloc[-1]['end_y'] / Config.MAX_Y
                 phase_end_coords.append([last_x, last_y])
 
-            if not phases_data: return None
-            
+            # [Location Aware 핵심]
+            # 히스토리의 마지막 Phase가 끝난 지점을 -> '실제 예측할 이벤트의 시작점'으로 덮어씀
+            # 이를 통해 모델은 정확한 시작 위치에서 예측을 수행함
+            if len(phase_end_coords) > 0:
+                phase_end_coords[-1] = [target_start_x, target_start_y]
+            else:
+                # 히스토리가 없어서 루프를 안 돈 경우 (예외처리)
+                phase_end_coords.append([target_start_x, target_start_y])
+                # 더미 데이터 추가 필요할 수 있음
+                return None 
+
             return (phases_data, start_actions, phase_lens, torch.FloatTensor(phase_end_coords), game_episode_id)
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error processing {fpath}: {e}")
             return None
 
 def test_collate_fn(batch):
     batch = [x for x in batch if x is not None]
-    if not batch: return (None,)*6
+    if not batch: return (None,)*7
     
     b_phases, b_acts, b_lens, b_coords, b_ids = zip(*batch)
     
@@ -216,7 +242,8 @@ def run_inference():
         input_size=Config.INPUT_SIZE,
         phase_hidden=Config.PHASE_HIDDEN,
         episode_hidden=Config.EPISODE_HIDDEN,
-        dropout=Config.DROPOUT
+        dropout=Config.DROPOUT,
+        num_actions=Config.NUM_ACTIONS
     ).to(Config.DEVICE)
     
     print(f"🔄 Loading model from {model_path}...")
@@ -224,7 +251,6 @@ def run_inference():
         model.load_state_dict(torch.load(model_path, map_location=Config.DEVICE))
     except Exception as e:
         print(f"❌ Model Load Fail: {e}")
-        print("   -> Tip: 학습된 모델과 Inference 모델의 Hidden Size나 구조가 같은지 확인하세요.")
         return
         
     model.eval()
@@ -248,37 +274,38 @@ def run_inference():
             padded_coords = batch[5].to(Config.DEVICE)
             ids = batch[6]
             
+            # Forward
             preds = model(padded_phases, phase_lengths, episode_lengths, 
                           start_action_ids, phase_len_ids, padded_coords)
             
+            # Denormalize
             pred_x = preds[:, 0].cpu().numpy() * Config.MAX_X
             pred_y = preds[:, 1].cpu().numpy() * Config.MAX_Y
             
-            # [중요] NaN 값 처리 (NaN이면 경기장 중앙 50, 34로 대체)
+            # NaN Handling
             if np.isnan(pred_x).any() or np.isnan(pred_y).any():
-                print("⚠️ Warning: NaN detected in predictions. Filling with center coords.")
                 pred_x = np.nan_to_num(pred_x, nan=52.5)
                 pred_y = np.nan_to_num(pred_y, nan=34.0)
 
+            # Clipping
             pred_x = np.clip(pred_x, 0, Config.MAX_X)
             pred_y = np.clip(pred_y, 0, Config.MAX_Y)
             
             for i, game_ep_id in enumerate(ids):
                 results.append({
                     'game_episode': game_ep_id,
-                    'end_x': float(pred_x[i]), # float 형변환 명시
+                    'end_x': float(pred_x[i]),
                     'end_y': float(pred_y[i])
                 })
     
-    # 4. Save Submission
+    # Save
     submission_df = pd.DataFrame(results)
     
-    # 데이터 확인용 출력
+    # Sort just in case (optional)
+    submission_df = submission_df.sort_values('game_episode')
+    
     print("\n🔍 [Check] First 5 predictions:")
     print(submission_df.head())
-    
-    # 필수 컬럼 순서 지정
-    submission_df = submission_df[['game_episode', 'end_x', 'end_y']]
     
     submission_df.to_csv(Config.OUTPUT_FILE, index=False)
     print(f"\n✅ Saved submission to {Config.OUTPUT_FILE} (Rows: {len(submission_df)})")
