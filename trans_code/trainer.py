@@ -1,5 +1,5 @@
 """
-학습 루프 함수
+학습 루프 함수 (wandb 연동 지원)
 """
 from typing import Dict, Tuple, Optional
 
@@ -111,6 +111,7 @@ def train_loop(
     use_scheduler: bool = True,
     early_stop_patience: int = 10,
     desc_prefix: str = "",
+    use_wandb: bool = False,
 ) -> Tuple[nn.Module, Dict, float]:
     """
     전체 학습 루프
@@ -125,10 +126,21 @@ def train_loop(
         use_scheduler: 학습률 스케줄러 사용 여부
         early_stop_patience: 조기 종료 patience
         desc_prefix: 로그 출력 접두어
+        use_wandb: wandb 로깅 사용 여부
         
     Returns:
         model, best_model_state, best_dist
     """
+    # wandb import (optional)
+    wandb = None
+    if use_wandb:
+        try:
+            import wandb as wb
+            wandb = wb
+        except ImportError:
+            print("[WARN] wandb not installed. Skipping wandb logging.")
+            use_wandb = False
+    
     best_dist = float("inf")
     best_model_state: Optional[Dict] = None
     patience_counter = 0
@@ -165,12 +177,28 @@ def train_loop(
             f"lr={current_lr:.2e}"
         )
         
+        # wandb 로깅
+        if use_wandb and wandb is not None:
+            wandb.log({
+                "epoch": epoch,
+                "train/loss": train_loss,
+                "valid/mean_dist": mean_dist,
+                "valid/std_dist": std_dist,
+                "train/learning_rate": current_lr,
+                "valid/best_dist": best_dist,
+            })
+        
         # Best model 업데이트
         if mean_dist < best_dist:
             best_dist = mean_dist
             best_model_state = model.state_dict().copy()
             patience_counter = 0
             print(f" --> {desc_prefix} Best model updated! (dist={best_dist:.4f})")
+            
+            # wandb에 best metric 기록
+            if use_wandb and wandb is not None:
+                wandb.run.summary["best_valid_dist"] = best_dist
+                wandb.run.summary["best_epoch"] = epoch
         else:
             patience_counter += 1
             if patience_counter >= early_stop_patience:
@@ -197,4 +225,3 @@ def load_model(model: nn.Module, path: str = MODEL_PATH) -> nn.Module:
     model.load_state_dict(state_dict)
     print(f"Model loaded from: {path}")
     return model
-

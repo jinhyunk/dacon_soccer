@@ -1,5 +1,10 @@
 """
 Dataset 및 시퀀스 생성 함수
+
+데이터 모드:
+- episode: game_episode 기준으로 시퀀스 생성 (기본)
+- episode_phase: game_episode 내에서 phase별로 시퀀스 생성
+- phase: phase 기준으로 시퀀스 생성 (pretrain용)
 """
 from typing import List, Tuple
 
@@ -135,10 +140,10 @@ def _build_sequence_from_group(g: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]
 
 
 # ==========================================
-# 학습용 시퀀스 생성 (game_episode 기준)
+# 학습용 시퀀스 생성 - episode 기준 (기본)
 # ==========================================
 
-def build_train_sequences(
+def build_episode_sequences(
     df: pd.DataFrame,
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
@@ -147,7 +152,7 @@ def build_train_sequences(
     episodes: List[np.ndarray] = []
     targets: List[np.ndarray] = []
 
-    for _, g in tqdm(df.groupby("game_episode"), desc="Building train sequences"):
+    for _, g in tqdm(df.groupby("game_episode"), desc="Building episode sequences"):
         g = g.sort_values("time_seconds").reset_index(drop=True)
         if len(g) < 2:
             continue
@@ -156,18 +161,111 @@ def build_train_sequences(
         episodes.append(seq)
         targets.append(target)
 
-    print(f"Total sequences: {len(episodes)}")
+    print(f"[episode mode] Total sequences: {len(episodes)}")
     return episodes, targets
+
+
+# ==========================================
+# 학습용 시퀀스 생성 - episode + phase 기준
+# ==========================================
+
+def build_episode_phase_sequences(
+    df: pd.DataFrame,
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """
+    game_episode 내에서 phase별로 시퀀스 생성
+    각 (game_episode, phase) 조합마다 하나의 시퀀스
+    """
+    episodes: List[np.ndarray] = []
+    targets: List[np.ndarray] = []
+
+    for _, g in tqdm(df.groupby(["game_episode", "phase"]), desc="Building episode+phase sequences"):
+        g = g.sort_values("time_seconds").reset_index(drop=True)
+        if len(g) < 2:
+            continue
+
+        seq, target = _build_sequence_from_group(g)
+        episodes.append(seq)
+        targets.append(target)
+
+    print(f"[episode_phase mode] Total sequences: {len(episodes)}")
+    return episodes, targets
+
+
+# ==========================================
+# 학습용 시퀀스 생성 - phase 기준 (pretrain용)
+# ==========================================
+
+def build_phase_sequences(
+    df: pd.DataFrame,
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """
+    phase 기준으로 시퀀스 생성 (pretrain용)
+    """
+    episodes: List[np.ndarray] = []
+    targets: List[np.ndarray] = []
+
+    for _, g in tqdm(df.groupby("phase"), desc="Building phase sequences"):
+        g = g.sort_values("time_seconds").reset_index(drop=True)
+        if len(g) < 2:
+            continue
+
+        seq, target = _build_sequence_from_group(g)
+        episodes.append(seq)
+        targets.append(target)
+
+    print(f"[phase mode] Total sequences: {len(episodes)}")
+    return episodes, targets
+
+
+# ==========================================
+# 통합 시퀀스 빌더
+# ==========================================
+
+def build_train_sequences(
+    df: pd.DataFrame,
+    data_mode: str = "episode",
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """
+    data_mode에 따라 다른 방식으로 시퀀스 생성
+    
+    Args:
+        df: 학습 데이터프레임
+        data_mode: 
+            - "episode": game_episode 기준 (기본)
+            - "episode_phase": game_episode + phase 기준
+            - "phase": phase 기준 (pretrain용)
+    
+    Returns:
+        episodes, targets
+    """
+    if data_mode == "episode":
+        return build_episode_sequences(df)
+    elif data_mode == "episode_phase":
+        return build_episode_phase_sequences(df)
+    elif data_mode == "phase":
+        return build_phase_sequences(df)
+    else:
+        raise ValueError(f"Unknown data_mode: {data_mode}. Use 'episode', 'episode_phase', or 'phase'.")
 
 
 # ==========================================
 # 추론용 시퀀스 생성
 # ==========================================
 
-def build_inference_sequence(use_df: pd.DataFrame) -> np.ndarray:
+def build_inference_sequence(
+    use_df: pd.DataFrame,
+    infer_mode: str = "episode",
+) -> np.ndarray:
     """
     추론용 시퀀스 생성
     마지막 행의 end_x, end_y는 예측 대상이므로 제외
+    
+    Args:
+        use_df: 추론에 사용할 데이터프레임
+        infer_mode: 
+            - "episode": 전체 episode 데이터 사용
+            - "episode_phase": 마지막 행과 같은 phase 데이터만 사용
     """
     sx = use_df["start_x"].values / FIELD_X
     sy = use_df["start_y"].values / FIELD_Y
@@ -189,3 +287,32 @@ def build_inference_sequence(use_df: pd.DataFrame) -> np.ndarray:
     
     return seq
 
+
+def get_inference_dataframe(
+    g: pd.DataFrame,
+    infer_mode: str = "episode",
+) -> pd.DataFrame:
+    """
+    추론 모드에 따라 사용할 데이터프레임 반환
+    
+    Args:
+        g: episode 전체 데이터프레임 (time_seconds 정렬됨)
+        infer_mode:
+            - "episode": 전체 episode 데이터 사용
+            - "episode_phase": 마지막 행과 같은 phase 데이터만 사용
+    
+    Returns:
+        추론에 사용할 데이터프레임
+    """
+    if infer_mode == "episode":
+        return g
+    elif infer_mode == "episode_phase":
+        # 마지막 행의 phase와 동일한 phase 데이터만 사용
+        last_phase = g.iloc[-1]["phase"]
+        g_phase = g[g["phase"] == last_phase].reset_index(drop=True)
+        # 데이터가 너무 적으면 전체 episode fallback
+        if len(g_phase) < 2:
+            return g
+        return g_phase
+    else:
+        raise ValueError(f"Unknown infer_mode: {infer_mode}. Use 'episode' or 'episode_phase'.")
