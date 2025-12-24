@@ -41,7 +41,7 @@ class Config:
     INPUT_SIZE = 5       
     PHASE_HIDDEN = 64
     EPISODE_HIDDEN = 256
-    DROPOUT = 0.3
+    DROPOUT = 0.0
     
     # [NEW] Multi-Task 설정
     NUM_CLASSES = 3  # 0:Goal/Attack, 1:Side/Out, 2:Inner

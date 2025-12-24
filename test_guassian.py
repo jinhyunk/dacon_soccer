@@ -39,7 +39,7 @@ class Config:
     INPUT_SIZE = 5       
     PHASE_HIDDEN = 64
     EPISODE_HIDDEN = 256
-    DROPOUT = 0.3
+    DROPOUT = 0.0
 
 ACTION_TO_IDX = {
     'Aerial Clearance': 0, 'Block': 1, 'Carry': 2, 'Catch': 3, 'Clearance': 4,
