@@ -32,7 +32,6 @@ def process_and_save_by_game(df, output_dir='./data', val_ratio=0.10):
     unique_games = df['game_id'].unique()
     
     # 랜덤 셔플
-    random.seed(42) 
     random.shuffle(unique_games)
     
     total_games = len(unique_games)
