@@ -107,11 +107,12 @@ def train_epoch(
         X = X.to(DEVICE)
         lengths = lengths.to(DEVICE)
         y = y.to(DEVICE)
+        padding_mask = padding_mask.to(DEVICE)
         
         optimizer.zero_grad()
         
         # Forward pass (학습 모드)
-        y_pred, mu, logvar, prior_mu, prior_logvar = model(X, lengths, y_gt=y)
+        y_pred, mu, logvar, prior_mu, prior_logvar = model(X, lengths, y_gt=y, padding_mask=padding_mask)
         
         # Compute loss
         loss, recon, kl = cvae_loss(
@@ -160,9 +161,10 @@ def validate(
             X = X.to(DEVICE)
             lengths = lengths.to(DEVICE)
             y = y.to(DEVICE)
+            padding_mask = padding_mask.to(DEVICE)
             
             # 다중 샘플링 예측
-            predictions = model.sample_multiple(X, lengths, num_samples)  # (B, K, 2)
+            predictions = model.sample_multiple(X, lengths, num_samples, padding_mask=padding_mask)  # (B, K, 2)
             
             # 평균 예측
             mean_pred = predictions.mean(dim=1)  # (B, 2)

@@ -59,18 +59,45 @@ def collate_fn(batch):
 def build_dataloaders(
     episodes: List[np.ndarray],
     targets: List[np.ndarray],
+    game_ids: List = None,
     batch_size: int = BATCH_SIZE,
     test_size: float = 0.2,
+    split_by_game: bool = True,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     시퀀스 리스트를 train/valid로 나누어 DataLoader 반환
+    
+    Args:
+        episodes: 시퀀스 리스트
+        targets: 타깃 리스트
+        game_ids: 각 에피소드의 game_id 리스트 (split_by_game=True일 때 필요)
+        batch_size: 배치 크기
+        test_size: 검증 데이터 비율
+        split_by_game: True면 game_id 기준 분리, False면 에피소드 기준 분리
     """
     if len(episodes) < 2:
         raise ValueError("시퀀스가 너무 적어서 학습이 불가능합니다.")
 
-    idx_train, idx_valid = train_test_split(
-        np.arange(len(episodes)), test_size=test_size, random_state=42
-    )
+    if split_by_game and game_ids is not None:
+        # game_id 기준 분리: 같은 game_id는 train 또는 valid에만 존재
+        unique_game_ids = np.array(list(set(game_ids)))
+        train_games, valid_games = train_test_split(
+            unique_game_ids, test_size=test_size, random_state=42
+        )
+        train_games_set = set(train_games)
+        valid_games_set = set(valid_games)
+        
+        idx_train = [i for i, gid in enumerate(game_ids) if gid in train_games_set]
+        idx_valid = [i for i, gid in enumerate(game_ids) if gid in valid_games_set]
+        
+        print(f"Split by game_id: {len(train_games)} train games, {len(valid_games)} valid games")
+    else:
+        # 에피소드 기준 분리 (기존 방식)
+        idx_train, idx_valid = train_test_split(
+            np.arange(len(episodes)), test_size=test_size, random_state=42
+        )
+        if split_by_game:
+            print("Warning: game_ids not provided, falling back to episode-based split")
 
     episodes_train = [episodes[i] for i in idx_train]
     targets_train = [targets[i] for i in idx_train]
@@ -140,14 +167,25 @@ def _build_sequence_from_group(g: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]
 
 def build_train_sequences(
     df: pd.DataFrame,
-) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    return_game_ids: bool = True,
+) -> Tuple[List[np.ndarray], List[np.ndarray], List]:
     """
     game_episode 기준으로 시퀀스 생성
+    
+    Args:
+        df: 학습 데이터프레임
+        return_game_ids: True면 game_id 리스트도 반환
+    
+    Returns:
+        episodes: 시퀀스 리스트
+        targets: 타깃 리스트
+        game_ids: 각 에피소드의 game_id 리스트 (return_game_ids=True일 때만)
     """
     episodes: List[np.ndarray] = []
     targets: List[np.ndarray] = []
+    game_ids: List = []
 
-    for _, g in tqdm(df.groupby("game_episode"), desc="Building train sequences"):
+    for game_episode, g in tqdm(df.groupby("game_episode"), desc="Building train sequences"):
         g = g.sort_values("time_seconds").reset_index(drop=True)
         if len(g) < 2:
             continue
@@ -155,8 +193,22 @@ def build_train_sequences(
         seq, target = _build_sequence_from_group(g)
         episodes.append(seq)
         targets.append(target)
+        
+        # game_episode에서 game_id 추출 (game_episode 형식: "game_id_episode_num")
+        # 또는 데이터에 game_id 컬럼이 있다면 그것을 사용
+        if "game_id" in g.columns:
+            game_id = g["game_id"].iloc[0]
+        else:
+            # game_episode에서 game_id 추출 시도
+            # 형식이 "gameid_episodenum" 이라고 가정
+            game_id = "_".join(str(game_episode).split("_")[:-1]) if "_" in str(game_episode) else game_episode
+        game_ids.append(game_id)
 
     print(f"Total sequences: {len(episodes)}")
+    print(f"Unique game_ids: {len(set(game_ids))}")
+    
+    if return_game_ids:
+        return episodes, targets, game_ids
     return episodes, targets
 
 

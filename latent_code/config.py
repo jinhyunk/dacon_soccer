@@ -23,9 +23,20 @@ LR = 1e-3
 
 # CVAE 파라미터
 INPUT_DIM = 2           # 입력 차원 (x, y 좌표)
-HIDDEN_DIM = 128        # LSTM hidden 차원
+HIDDEN_DIM = 128        # 인코더 hidden 차원
 Z_DIM = 16              # 잠재 변수 차원
 NUM_SAMPLES = 20        # 추론 시 샘플링 개수
+
+# 인코더 설정
+# 지원 옵션: "lstm", "gru", "transformer"
+# - lstm: LSTM 기반 (기본값, 순차적 의존성 학습에 적합)
+# - gru: GRU 기반 (LSTM보다 가볍고 빠름)
+# - transformer: Transformer 기반 (전역 의존성 학습, 긴 시퀀스에 효과적)
+ENCODER_TYPE = "gru"
+
+# Transformer 인코더 전용 파라미터
+TRANSFORMER_NUM_LAYERS = 4    # Transformer encoder layer 개수
+TRANSFORMER_NUM_HEADS = 4     # Multi-head attention의 head 개수
 
 # KL divergence 가중치 (beta-VAE)
 BETA_START = 0.0        # 초기 beta 값

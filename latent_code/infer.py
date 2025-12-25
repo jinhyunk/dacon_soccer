@@ -21,6 +21,10 @@ from config import (
     NUM_SAMPLES,
     FIELD_X,
     FIELD_Y,
+    ENCODER_TYPE,
+    TRANSFORMER_NUM_LAYERS,
+    TRANSFORMER_NUM_HEADS,
+    MAX_SEQ_LEN,
     log_device,
 )
 from dataset import build_inference_sequence
@@ -53,8 +57,12 @@ def predict_single(
         x_seq = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).to(DEVICE)  # (1, T, 2)
         lengths = torch.tensor([seq.shape[0]], dtype=torch.long).to(DEVICE)  # (1,)
         
+        # 패딩 마스크 생성 (단일 시퀀스라 패딩 없음)
+        T = x_seq.size(1)
+        padding_mask = torch.zeros(1, T, dtype=torch.bool, device=DEVICE)  # (1, T)
+        
         # 다중 샘플링 예측
-        predictions = model.sample_multiple(x_seq, lengths, num_samples)  # (1, K, 2)
+        predictions = model.sample_multiple(x_seq, lengths, num_samples, padding_mask=padding_mask)  # (1, K, 2)
         
         # 집계
         if aggregation == "mean":
@@ -84,7 +92,11 @@ def predict_with_samples(
         x_seq = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).to(DEVICE)
         lengths = torch.tensor([seq.shape[0]], dtype=torch.long).to(DEVICE)
         
-        predictions = model.sample_multiple(x_seq, lengths, num_samples)  # (1, K, 2)
+        # 패딩 마스크 생성 (단일 시퀀스라 패딩 없음)
+        T = x_seq.size(1)
+        padding_mask = torch.zeros(1, T, dtype=torch.bool, device=DEVICE)
+        
+        predictions = model.sample_multiple(x_seq, lengths, num_samples, padding_mask=padding_mask)  # (1, K, 2)
         
         return predictions.squeeze(0).cpu().numpy()  # (K, 2)
 
@@ -146,13 +158,24 @@ def main(submit_mode: bool = False):
         print(f"Episodes to predict: {len(episode_list)}")
         compute_distance = True  # 검증용은 GT 있음
     
+    # 인코더 추가 설정 (Transformer용)
+    encoder_kwargs = {}
+    if ENCODER_TYPE == "transformer":
+        encoder_kwargs = {
+            "num_layers": TRANSFORMER_NUM_LAYERS,
+            "num_heads": TRANSFORMER_NUM_HEADS,
+            "max_seq_len": MAX_SEQ_LEN,
+        }
+    
     # 모델 로드
-    print("Loading model...")
+    print(f"Loading model (encoder: {ENCODER_TYPE})...")
     model = PassCVAE(
         input_dim=INPUT_DIM,
         hidden_dim=HIDDEN_DIM,
         z_dim=Z_DIM,
-        use_learned_prior=True
+        use_learned_prior=True,
+        encoder_type=ENCODER_TYPE,
+        encoder_kwargs=encoder_kwargs
     ).to(DEVICE)
     model = load_model(model, MODEL_PATH)
     model.eval()
@@ -350,13 +373,24 @@ def visualize_mode(game_episode: str, num_samples: int = 50, save_path: str = No
     
     path = episode_to_path[game_episode]
     
+    # 인코더 추가 설정 (Transformer용)
+    encoder_kwargs = {}
+    if ENCODER_TYPE == "transformer":
+        encoder_kwargs = {
+            "num_layers": TRANSFORMER_NUM_LAYERS,
+            "num_heads": TRANSFORMER_NUM_HEADS,
+            "max_seq_len": MAX_SEQ_LEN,
+        }
+    
     # 모델 로드
-    print("Loading model...")
+    print(f"Loading model (encoder: {ENCODER_TYPE})...")
     model = PassCVAE(
         input_dim=INPUT_DIM,
         hidden_dim=HIDDEN_DIM,
         z_dim=Z_DIM,
-        use_learned_prior=True
+        use_learned_prior=True,
+        encoder_type=ENCODER_TYPE,
+        encoder_kwargs=encoder_kwargs
     ).to(DEVICE)
     model = load_model(model, MODEL_PATH)
     model.eval()
