@@ -25,9 +25,14 @@ from config import (
     TRANSFORMER_NUM_LAYERS,
     TRANSFORMER_NUM_HEADS,
     MAX_SEQ_LEN,
+    SEQUENCE_MODE,
     log_device,
 )
-from dataset import build_inference_sequence
+from dataset import (
+    build_inference_sequence, 
+    build_inference_sequence_by_phase,
+    get_phases_from_episode
+)
 from model import PassCVAE
 from trainer import load_model
 
@@ -125,15 +130,20 @@ def build_episode_path_map(meta_path: str) -> dict:
     return episode_to_path, test_meta
 
 
-def main(submit_mode: bool = False):
+def main(submit_mode: bool = False, sequence_mode: str = None):
     """
     메인 추론 함수
     
     Args:
         submit_mode: True면 제출용(base_test.csv), False면 검증용(temporal_test.csv)
+        sequence_mode: "episode" 또는 "phase" (None이면 config의 SEQUENCE_MODE 사용)
     """
     import os
     log_device()
+    
+    # 시퀀스 모드 결정
+    seq_mode = sequence_mode if sequence_mode else SEQUENCE_MODE
+    print(f"Encoder: {ENCODER_TYPE}, Sequence mode: {seq_mode}")
     
     if submit_mode:
         # 제출 모드: base_test.csv + sample_submission.csv 사용
@@ -185,60 +195,119 @@ def main(submit_mode: bool = False):
     results = []
     distances = []  # 거리 저장용
     
-    for idx in tqdm(episode_list, desc="Predicting"):
-        # 해당 episode의 CSV 파일 경로 가져오기
-        if idx not in episode_to_path:
-            # 데이터가 없는 경우 기본값
+    if seq_mode == "episode":
+        # ========== Episode 모드: 에피소드 단위로 예측 ==========
+        for idx in tqdm(episode_list, desc="Predicting (episode mode)"):
+            if idx not in episode_to_path:
+                results.append({
+                    "game_episode": idx,
+                    "end_x": FIELD_X / 2,
+                    "end_y": FIELD_Y / 2
+                })
+                continue
+            
+            episode_path = episode_to_path[idx]
+            use_df = pd.read_csv(episode_path)
+            use_df = use_df.sort_values("time_seconds").reset_index(drop=True)
+            
+            if len(use_df) == 0:
+                results.append({
+                    "game_episode": idx,
+                    "end_x": FIELD_X / 2,
+                    "end_y": FIELD_Y / 2
+                })
+                continue
+            
+            # 시퀀스 생성 (에피소드 전체)
+            seq = build_inference_sequence(use_df)
+            
+            # 예측
+            pred = predict_single(model, seq, num_samples=NUM_SAMPLES, aggregation="mean")
+            pred_x = float(np.clip(pred[0] * FIELD_X, 0, FIELD_X))
+            pred_y = float(np.clip(pred[1] * FIELD_Y, 0, FIELD_Y))
+            
+            # Ground truth와의 거리 계산 (검증 모드에서만)
+            if compute_distance:
+                gt_x = use_df.iloc[-1]["end_x"]
+                gt_y = use_df.iloc[-1]["end_y"]
+                dist = np.sqrt((pred_x - gt_x) ** 2 + (pred_y - gt_y) ** 2)
+                distances.append(dist)
+            
             results.append({
                 "game_episode": idx,
-                "end_x": FIELD_X / 2,
-                "end_y": FIELD_Y / 2
+                "end_x": pred_x,
+                "end_y": pred_y
             })
-            continue
-        
-        # 개별 episode CSV 파일 로드
-        episode_path = episode_to_path[idx]
-        use_df = pd.read_csv(episode_path)
-        use_df = use_df.sort_values("time_seconds").reset_index(drop=True)
-        
-        if len(use_df) == 0:
-            results.append({
-                "game_episode": idx,
-                "end_x": FIELD_X / 2,
-                "end_y": FIELD_Y / 2
-            })
-            continue
-        
-        # 시퀀스 생성
-        seq = build_inference_sequence(use_df)
-        
-        # 예측 (다중 샘플링 후 평균)
-        pred = predict_single(model, seq, num_samples=NUM_SAMPLES, aggregation="mean")
-        
-        # 실제 좌표로 변환
-        pred_x = float(pred[0] * FIELD_X)
-        pred_y = float(pred[1] * FIELD_Y)
-        
-        # 좌표 범위 클리핑
-        pred_x = np.clip(pred_x, 0, FIELD_X)
-        pred_y = np.clip(pred_y, 0, FIELD_Y)
-        
-        # Ground truth와의 거리 계산 (검증 모드에서만)
-        if compute_distance:
-            gt_x = use_df.iloc[-1]["end_x"]
-            gt_y = use_df.iloc[-1]["end_y"]
-            dist = np.sqrt((pred_x - gt_x) ** 2 + (pred_y - gt_y) ** 2)
-            distances.append(dist)
-        
-        results.append({
-            "game_episode": idx,
-            "end_x": pred_x,
-            "end_y": pred_y
-        })
+    
+    elif seq_mode == "phase":
+        # ========== Phase 모드: 각 phase 단위로 예측 ==========
+        for idx in tqdm(episode_list, desc="Predicting (phase mode)"):
+            if idx not in episode_to_path:
+                results.append({
+                    "game_episode": idx,
+                    "phase": None,
+                    "end_x": FIELD_X / 2,
+                    "end_y": FIELD_Y / 2
+                })
+                continue
+            
+            episode_path = episode_to_path[idx]
+            use_df = pd.read_csv(episode_path)
+            use_df = use_df.sort_values("time_seconds").reset_index(drop=True)
+            
+            if len(use_df) == 0 or "phase" not in use_df.columns:
+                results.append({
+                    "game_episode": idx,
+                    "phase": None,
+                    "end_x": FIELD_X / 2,
+                    "end_y": FIELD_Y / 2
+                })
+                continue
+            
+            # 에피소드의 Ground Truth (마지막 행)
+            episode_gt_x = use_df.iloc[-1]["end_x"]
+            episode_gt_y = use_df.iloc[-1]["end_y"]
+            
+            # 에피소드 내 모든 phase에 대해 예측
+            phases = get_phases_from_episode(use_df)
+            last_phase = phases[-1] if phases else None
+            
+            for phase_id in phases:
+                phase_df = use_df[use_df["phase"] == phase_id].sort_values("time_seconds").reset_index(drop=True)
+                
+                if len(phase_df) < 2:
+                    continue
+                
+                # 시퀀스 생성 (해당 phase만)
+                seq = build_inference_sequence(phase_df)
+                
+                # 예측
+                pred = predict_single(model, seq, num_samples=NUM_SAMPLES, aggregation="mean")
+                pred_x = float(np.clip(pred[0] * FIELD_X, 0, FIELD_X))
+                pred_y = float(np.clip(pred[1] * FIELD_Y, 0, FIELD_Y))
+                
+                # Ground truth 거리 계산 (마지막 phase만 - episode 마지막 행 기준)
+                # Episode 모드와 동일한 기준으로 비교하기 위함
+                if compute_distance and phase_id == last_phase:
+                    dist = np.sqrt((pred_x - episode_gt_x) ** 2 + (pred_y - episode_gt_y) ** 2)
+                    distances.append(dist)
+                
+                results.append({
+                    "game_episode": idx,
+                    "phase": phase_id,
+                    "end_x": pred_x,
+                    "end_y": pred_y
+                })
+    else:
+        raise ValueError(f"Unknown sequence mode: {seq_mode}")
     
     # 결과 저장
     result_df = pd.DataFrame(results)
     if submit_mode:
+        # 제출용은 game_episode 기준으로 마지막 phase 예측만 사용
+        if seq_mode == "phase":
+            result_df = result_df.groupby("game_episode").last().reset_index()
+            result_df = result_df[["game_episode", "end_x", "end_y"]]
         result_df.to_csv(SUBMIT_PATH, index=False)
         print(f"\nSubmission saved to {SUBMIT_PATH}")
     print(f"Total predictions: {len(result_df)}")
@@ -407,6 +476,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CVAE Inference")
     parser.add_argument("--submit", action="store_true",
                         help="제출 모드 (base_test.csv + sample_submission.csv 사용)")
+    parser.add_argument("--mode", type=str, default=None, choices=["episode", "phase"],
+                        help="시퀀스 모드 (episode: 에피소드 단위, phase: phase 단위). 미지정시 config 사용")
     parser.add_argument("--visualize", type=str, default=None,
                         help="Visualize a specific game_episode (e.g., 126292_1)")
     parser.add_argument("--num_samples", type=int, default=50,
@@ -419,4 +490,4 @@ if __name__ == "__main__":
     if args.visualize:
         visualize_mode(args.visualize, args.num_samples, args.save)
     else:
-        main(submit_mode=args.submit)
+        main(submit_mode=args.submit, sequence_mode=args.mode)

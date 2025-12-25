@@ -162,15 +162,18 @@ def _build_sequence_from_group(g: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]
 
 
 # ==========================================
-# 학습용 시퀀스 생성 (game_episode 기준)
+# 학습용 시퀀스 생성 (game_episode 기준) - Episode 모드
 # ==========================================
 
-def build_train_sequences(
+def build_train_sequences_by_episode(
     df: pd.DataFrame,
     return_game_ids: bool = True,
 ) -> Tuple[List[np.ndarray], List[np.ndarray], List]:
     """
-    game_episode 기준으로 시퀀스 생성
+    game_episode 기준으로 시퀀스 생성 (Episode 모드)
+    
+    한 에피소드 전체를 하나의 시퀀스로 사용하고, 
+    마지막 액션의 도착 좌표를 예측
     
     Args:
         df: 학습 데이터프레임
@@ -179,13 +182,13 @@ def build_train_sequences(
     Returns:
         episodes: 시퀀스 리스트
         targets: 타깃 리스트
-        game_ids: 각 에피소드의 game_id 리스트 (return_game_ids=True일 때만)
+        game_ids: 각 에피소드의 game_id 리스트
     """
     episodes: List[np.ndarray] = []
     targets: List[np.ndarray] = []
     game_ids: List = []
 
-    for game_episode, g in tqdm(df.groupby("game_episode"), desc="Building train sequences"):
+    for game_episode, g in tqdm(df.groupby("game_episode"), desc="Building sequences (episode mode)"):
         g = g.sort_values("time_seconds").reset_index(drop=True)
         if len(g) < 2:
             continue
@@ -194,13 +197,10 @@ def build_train_sequences(
         episodes.append(seq)
         targets.append(target)
         
-        # game_episode에서 game_id 추출 (game_episode 형식: "game_id_episode_num")
-        # 또는 데이터에 game_id 컬럼이 있다면 그것을 사용
+        # game_id 추출
         if "game_id" in g.columns:
             game_id = g["game_id"].iloc[0]
         else:
-            # game_episode에서 game_id 추출 시도
-            # 형식이 "gameid_episodenum" 이라고 가정
             game_id = "_".join(str(game_episode).split("_")[:-1]) if "_" in str(game_episode) else game_episode
         game_ids.append(game_id)
 
@@ -213,13 +213,120 @@ def build_train_sequences(
 
 
 # ==========================================
+# 학습용 시퀀스 생성 (phase 기준) - Phase 모드
+# ==========================================
+
+def build_train_sequences_by_phase(
+    df: pd.DataFrame,
+    return_game_ids: bool = True,
+) -> Tuple[List[np.ndarray], List[np.ndarray], List]:
+    """
+    Episode 내 phase 기준으로 시퀀스 생성 (Phase 모드)
+    
+    1. 먼저 game_episode로 나눔
+    2. 각 episode 내에서 phase로 다시 나눔
+    3. 각 phase를 하나의 시퀀스로 사용하고, 마지막 좌표를 예측
+    
+    Args:
+        df: 학습 데이터프레임 (반드시 'phase' 컬럼 필요)
+        return_game_ids: True면 game_id 리스트도 반환
+    
+    Returns:
+        sequences: 시퀀스 리스트
+        targets: 타깃 리스트
+        game_ids: 각 시퀀스의 game_id 리스트
+    """
+    if "phase" not in df.columns:
+        raise ValueError("Phase 모드를 사용하려면 'phase' 컬럼이 필요합니다.")
+    
+    sequences: List[np.ndarray] = []
+    targets: List[np.ndarray] = []
+    game_ids: List = []
+    
+    total_episodes = 0
+    total_phases = 0
+
+    # 1단계: episode 기준으로 그룹화
+    for game_episode, episode_df in tqdm(df.groupby("game_episode"), desc="Building sequences (phase mode)"):
+        total_episodes += 1
+        
+        # game_id 추출 (episode 수준에서 한 번만)
+        if "game_id" in episode_df.columns:
+            game_id = episode_df["game_id"].iloc[0]
+        else:
+            game_id = "_".join(str(game_episode).split("_")[:-1]) if "_" in str(game_episode) else game_episode
+        
+        # 2단계: episode 내에서 phase 기준으로 그룹화
+        for phase_id, phase_df in episode_df.groupby("phase"):
+            phase_df = phase_df.sort_values("time_seconds").reset_index(drop=True)
+            
+            if len(phase_df) < 2:
+                continue
+            
+            total_phases += 1
+            
+            seq, target = _build_sequence_from_group(phase_df)
+            sequences.append(seq)
+            targets.append(target)
+            game_ids.append(game_id)
+
+    print(f"Total episodes: {total_episodes}")
+    print(f"Total phases (sequences): {total_phases}")
+    print(f"Unique game_ids: {len(set(game_ids))}")
+    
+    if return_game_ids:
+        return sequences, targets, game_ids
+    return sequences, targets
+
+
+# ==========================================
+# 통합 시퀀스 생성 함수
+# ==========================================
+
+def build_train_sequences(
+    df: pd.DataFrame,
+    mode: str = "episode",
+    return_game_ids: bool = True,
+) -> Tuple[List[np.ndarray], List[np.ndarray], List]:
+    """
+    시퀀스 모드에 따라 적절한 시퀀스 생성 함수 호출
+    
+    Args:
+        df: 학습 데이터프레임
+        mode: "episode" 또는 "phase"
+            - episode: game_episode 단위로 시퀀스 생성 (기본값)
+            - phase: phase 단위로 시퀀스 생성
+        return_game_ids: True면 game_id 리스트도 반환
+    
+    Returns:
+        sequences: 시퀀스 리스트
+        targets: 타깃 리스트
+        game_ids: 각 시퀀스의 game_id 리스트
+    """
+    print(f"Sequence mode: {mode}")
+    
+    if mode == "episode":
+        return build_train_sequences_by_episode(df, return_game_ids)
+    elif mode == "phase":
+        return build_train_sequences_by_phase(df, return_game_ids)
+    else:
+        raise ValueError(f"Unknown sequence mode: {mode}. Use 'episode' or 'phase'")
+
+
+# ==========================================
 # 추론용 시퀀스 생성
 # ==========================================
 
 def build_inference_sequence(use_df: pd.DataFrame) -> np.ndarray:
     """
-    추론용 시퀀스 생성
+    추론용 시퀀스 생성 (Episode 모드)
     마지막 행의 end_x, end_y는 예측 대상이므로 제외
+    
+    Args:
+        use_df: 추론할 에피소드의 데이터프레임
+        
+    Returns:
+        seq: (T, 2) 정규화된 좌표 시퀀스
     """
     sx = use_df["start_x"].values / FIELD_X
     sy = use_df["start_y"].values / FIELD_Y
@@ -240,4 +347,50 @@ def build_inference_sequence(use_df: pd.DataFrame) -> np.ndarray:
         seq = seq[-MAX_SEQ_LEN:]
     
     return seq
+
+
+def build_inference_sequence_by_phase(
+    use_df: pd.DataFrame, 
+    target_phase: str
+) -> np.ndarray:
+    """
+    추론용 시퀀스 생성 (Phase 모드)
+    지정된 phase에 해당하는 데이터만 사용하여 시퀀스 생성
+    
+    Args:
+        use_df: 추론할 에피소드의 전체 데이터프레임
+        target_phase: 예측할 phase ID
+        
+    Returns:
+        seq: (T, 2) 정규화된 좌표 시퀀스
+    """
+    if "phase" not in use_df.columns:
+        raise ValueError("Phase 모드를 사용하려면 'phase' 컬럼이 필요합니다.")
+    
+    # 해당 phase 데이터만 추출
+    phase_df = use_df[use_df["phase"] == target_phase].copy()
+    phase_df = phase_df.sort_values("time_seconds").reset_index(drop=True)
+    
+    if len(phase_df) == 0:
+        raise ValueError(f"Phase '{target_phase}'에 해당하는 데이터가 없습니다.")
+    
+    return build_inference_sequence(phase_df)
+
+
+def get_phases_from_episode(use_df: pd.DataFrame) -> List[str]:
+    """
+    에피소드에서 모든 phase ID 목록 추출
+    
+    Args:
+        use_df: 에피소드 데이터프레임
+        
+    Returns:
+        phase_ids: phase ID 리스트 (시간 순서)
+    """
+    if "phase" not in use_df.columns:
+        raise ValueError("'phase' 컬럼이 필요합니다.")
+    
+    # 각 phase의 첫 번째 time_seconds 기준으로 정렬
+    phase_order = use_df.groupby("phase")["time_seconds"].min().sort_values()
+    return phase_order.index.tolist()
 

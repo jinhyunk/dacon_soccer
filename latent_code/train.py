@@ -18,6 +18,7 @@ from config import (
     TRANSFORMER_NUM_LAYERS,
     TRANSFORMER_NUM_HEADS,
     MAX_SEQ_LEN,
+    SEQUENCE_MODE,
     log_device,
 )
 from dataset import build_train_sequences, build_dataloaders
@@ -28,15 +29,18 @@ from trainer import train_loop, save_model
 def main():
     # Device 확인
     log_device()
+    print(f"Encoder: {ENCODER_TYPE}, Sequence mode: {SEQUENCE_MODE}")
     
     # 데이터 로드
     print(f"Loading data from {TRAIN_PATH}...")
     df = pd.read_csv(TRAIN_PATH)
     print(f"Data shape: {df.shape}")
     
-    # 시퀀스 생성 (game_id 정보 포함)
+    # 시퀀스 생성 (mode에 따라 episode 또는 phase 단위)
     print("Building sequences...")
-    episodes, targets, game_ids = build_train_sequences(df, return_game_ids=True)
+    episodes, targets, game_ids = build_train_sequences(
+        df, mode=SEQUENCE_MODE, return_game_ids=True
+    )
     
     # DataLoader 생성 (game_id 기준 분리)
     print("Building dataloaders (split by game_id)...")
