@@ -238,8 +238,9 @@ def main(submit_mode: bool = False):
     
     # 결과 저장
     result_df = pd.DataFrame(results)
-    result_df.to_csv(SUBMIT_PATH, index=False)
-    print(f"\nSubmission saved to {SUBMIT_PATH}")
+    if submit_mode:
+        result_df.to_csv(SUBMIT_PATH, index=False)
+        print(f"\nSubmission saved to {SUBMIT_PATH}")
     print(f"Total predictions: {len(result_df)}")
     
     # 통계 출력

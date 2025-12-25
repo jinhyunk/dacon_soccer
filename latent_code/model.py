@@ -182,8 +182,8 @@ class TransformerEncoderX(nn.Module):
         # Input projection
         self.input_proj = nn.Linear(input_dim, hidden_dim)
         
-        # Positional encoding
-        self.pos_encoder = PositionalEncoding(hidden_dim, max_seq_len, dropout)
+        # Positional encoding (+1 for CLS token)
+        self.pos_encoder = PositionalEncoding(hidden_dim, max_seq_len + 1, dropout)
         
         # Transformer encoder layers
         encoder_layer = nn.TransformerEncoderLayer(

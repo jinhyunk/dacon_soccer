@@ -32,7 +32,9 @@ NUM_SAMPLES = 20        # 추론 시 샘플링 개수
 # - lstm: LSTM 기반 (기본값, 순차적 의존성 학습에 적합)
 # - gru: GRU 기반 (LSTM보다 가볍고 빠름)
 # - transformer: Transformer 기반 (전역 의존성 학습, 긴 시퀀스에 효과적)
-ENCODER_TYPE = "gru"
+# ENCODER_TYPE = "gru"
+# ENCODER_TYPE = "transformer"
+ENCODER_TYPE = "lstm"
 
 # Transformer 인코더 전용 파라미터
 TRANSFORMER_NUM_LAYERS = 4    # Transformer encoder layer 개수
