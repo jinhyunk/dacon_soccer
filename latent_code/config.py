@@ -49,13 +49,16 @@ BETA_WARMUP_EPOCHS = 10 # beta warmup 에폭 수
 MAX_SEQ_LEN = 512       # 최대 시퀀스 길이
 
 # 시퀀스 모드 설정
-# 지원 옵션: "episode", "phase"
+# 지원 옵션: "episode", "phase", "team"
 # - episode: game_episode 단위로 시퀀스 생성 (기본값)
 #            한 에피소드 전체를 하나의 시퀀스로 사용, 마지막 좌표 예측
 # - phase: game_episode 내에서 phase 단위로 시퀀스 생성
-#          한 에피소드 내 각 phase를 별도 시퀀스로 사용, 각 phase의 마지막 좌표 예측
+#          한 에피소드 내 각 phase를 별도 시퀀스로 사용
+# - team: game_episode 내에서 team_id 단위로 시퀀스 생성
+#         예측할 좌표와 동일한 team_id의 데이터만 사용
 # SEQUENCE_MODE = "episode"
-SEQUENCE_MODE = "phase"
+# SEQUENCE_MODE = "phase"
+SEQUENCE_MODE = "team"
 
 # =========================
 # Device 설정

@@ -298,6 +298,62 @@ def main(submit_mode: bool = False, sequence_mode: str = None):
                     "end_x": pred_x,
                     "end_y": pred_y
                 })
+    
+    elif seq_mode == "team":
+        # ========== Team 모드: 예측할 좌표와 동일한 team_id의 데이터만 사용 ==========
+        for idx in tqdm(episode_list, desc="Predicting (team mode)"):
+            if idx not in episode_to_path:
+                results.append({
+                    "game_episode": idx,
+                    "end_x": FIELD_X / 2,
+                    "end_y": FIELD_Y / 2
+                })
+                continue
+            
+            episode_path = episode_to_path[idx]
+            use_df = pd.read_csv(episode_path)
+            use_df = use_df.sort_values("time_seconds").reset_index(drop=True)
+            
+            if len(use_df) == 0 or "team_id" not in use_df.columns:
+                results.append({
+                    "game_episode": idx,
+                    "end_x": FIELD_X / 2,
+                    "end_y": FIELD_Y / 2
+                })
+                continue
+            
+            # 에피소드의 Ground Truth (마지막 행)
+            last_row = use_df.iloc[-1]
+            episode_gt_x = last_row["end_x"]
+            episode_gt_y = last_row["end_y"]
+            target_team_id = last_row["team_id"]
+            
+            # 예측할 좌표와 동일한 team_id의 데이터만 추출
+            team_df = use_df[use_df["team_id"] == target_team_id].sort_values("time_seconds").reset_index(drop=True)
+            
+            if len(team_df) < 2:
+                # team 데이터가 부족하면 전체 에피소드 사용
+                team_df = use_df
+            
+            # 시퀀스 생성 (해당 team만)
+            seq = build_inference_sequence(team_df)
+            
+            # 예측
+            pred = predict_single(model, seq, num_samples=NUM_SAMPLES, aggregation="mean")
+            pred_x = float(np.clip(pred[0] * FIELD_X, 0, FIELD_X))
+            pred_y = float(np.clip(pred[1] * FIELD_Y, 0, FIELD_Y))
+            
+            # Ground truth 거리 계산 (episode 마지막 행 기준)
+            if compute_distance:
+                dist = np.sqrt((pred_x - episode_gt_x) ** 2 + (pred_y - episode_gt_y) ** 2)
+                distances.append(dist)
+            
+            results.append({
+                "game_episode": idx,
+                "end_x": pred_x,
+                "end_y": pred_y
+            })
+    
     else:
         raise ValueError(f"Unknown sequence mode: {seq_mode}")
     
@@ -476,8 +532,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CVAE Inference")
     parser.add_argument("--submit", action="store_true",
                         help="제출 모드 (base_test.csv + sample_submission.csv 사용)")
-    parser.add_argument("--mode", type=str, default=None, choices=["episode", "phase"],
-                        help="시퀀스 모드 (episode: 에피소드 단위, phase: phase 단위). 미지정시 config 사용")
+    parser.add_argument("--mode", type=str, default=None, choices=["episode", "phase", "team"],
+                        help="시퀀스 모드 (episode/phase/team). 미지정시 config 사용")
     parser.add_argument("--visualize", type=str, default=None,
                         help="Visualize a specific game_episode (e.g., 126292_1)")
     parser.add_argument("--num_samples", type=int, default=50,

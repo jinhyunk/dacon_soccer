@@ -280,6 +280,80 @@ def build_train_sequences_by_phase(
 
 
 # ==========================================
+# 학습용 시퀀스 생성 (team_id 기준) - Team 모드
+# ==========================================
+
+def build_train_sequences_by_team(
+    df: pd.DataFrame,
+    return_game_ids: bool = True,
+) -> Tuple[List[np.ndarray], List[np.ndarray], List]:
+    """
+    Episode 내 team_id 기준으로 시퀀스 생성 (Team 모드)
+    
+    1. 먼저 game_episode로 나눔
+    2. 각 episode의 마지막 행의 team_id를 확인
+    3. 해당 team_id의 데이터만 사용하여 시퀀스 생성
+    4. 마지막 행의 좌표를 예측 타깃으로 사용
+    
+    Args:
+        df: 학습 데이터프레임 (반드시 'team_id' 컬럼 필요)
+        return_game_ids: True면 game_id 리스트도 반환
+    
+    Returns:
+        sequences: 시퀀스 리스트
+        targets: 타깃 리스트
+        game_ids: 각 시퀀스의 game_id 리스트
+    """
+    if "team_id" not in df.columns:
+        raise ValueError("Team 모드를 사용하려면 'team_id' 컬럼이 필요합니다.")
+    
+    sequences: List[np.ndarray] = []
+    targets: List[np.ndarray] = []
+    game_ids: List = []
+    
+    total_episodes = 0
+    skipped = 0
+
+    for game_episode, episode_df in tqdm(df.groupby("game_episode"), desc="Building sequences (team mode)"):
+        episode_df = episode_df.sort_values("time_seconds").reset_index(drop=True)
+        total_episodes += 1
+        
+        if len(episode_df) < 2:
+            skipped += 1
+            continue
+        
+        # game_id 추출
+        if "game_id" in episode_df.columns:
+            game_id = episode_df["game_id"].iloc[0]
+        else:
+            game_id = "_".join(str(game_episode).split("_")[:-1]) if "_" in str(game_episode) else game_episode
+        
+        # 마지막 행의 team_id 확인
+        target_team_id = episode_df.iloc[-1]["team_id"]
+        
+        # 해당 team_id의 데이터만 필터링
+        team_df = episode_df[episode_df["team_id"] == target_team_id].sort_values("time_seconds").reset_index(drop=True)
+        
+        if len(team_df) < 2:
+            skipped += 1
+            continue
+        
+        seq, target = _build_sequence_from_group(team_df)
+        sequences.append(seq)
+        targets.append(target)
+        game_ids.append(game_id)
+
+    print(f"Total episodes: {total_episodes}")
+    print(f"Valid sequences: {len(sequences)}")
+    print(f"Skipped (insufficient data): {skipped}")
+    print(f"Unique game_ids: {len(set(game_ids))}")
+    
+    if return_game_ids:
+        return sequences, targets, game_ids
+    return sequences, targets
+
+
+# ==========================================
 # 통합 시퀀스 생성 함수
 # ==========================================
 
@@ -293,9 +367,10 @@ def build_train_sequences(
     
     Args:
         df: 학습 데이터프레임
-        mode: "episode" 또는 "phase"
+        mode: "episode", "phase", 또는 "team"
             - episode: game_episode 단위로 시퀀스 생성 (기본값)
             - phase: phase 단위로 시퀀스 생성
+            - team: 마지막 행과 동일한 team_id의 데이터만 사용
         return_game_ids: True면 game_id 리스트도 반환
     
     Returns:
@@ -309,8 +384,10 @@ def build_train_sequences(
         return build_train_sequences_by_episode(df, return_game_ids)
     elif mode == "phase":
         return build_train_sequences_by_phase(df, return_game_ids)
+    elif mode == "team":
+        return build_train_sequences_by_team(df, return_game_ids)
     else:
-        raise ValueError(f"Unknown sequence mode: {mode}. Use 'episode' or 'phase'")
+        raise ValueError(f"Unknown sequence mode: {mode}. Use 'episode', 'phase', or 'team'")
 
 
 # ==========================================
@@ -393,4 +470,32 @@ def get_phases_from_episode(use_df: pd.DataFrame) -> List[str]:
     # 각 phase의 첫 번째 time_seconds 기준으로 정렬
     phase_order = use_df.groupby("phase")["time_seconds"].min().sort_values()
     return phase_order.index.tolist()
+
+
+def build_inference_sequence_by_team(use_df: pd.DataFrame) -> np.ndarray:
+    """
+    추론용 시퀀스 생성 (Team 모드)
+    마지막 행과 동일한 team_id의 데이터만 사용하여 시퀀스 생성
+    
+    Args:
+        use_df: 추론할 에피소드의 전체 데이터프레임
+        
+    Returns:
+        seq: (T, 2) 정규화된 좌표 시퀀스
+    """
+    if "team_id" not in use_df.columns:
+        raise ValueError("Team 모드를 사용하려면 'team_id' 컬럼이 필요합니다.")
+    
+    use_df = use_df.sort_values("time_seconds").reset_index(drop=True)
+    
+    # 마지막 행의 team_id 확인
+    target_team_id = use_df.iloc[-1]["team_id"]
+    
+    # 해당 team_id의 데이터만 필터링
+    team_df = use_df[use_df["team_id"] == target_team_id].sort_values("time_seconds").reset_index(drop=True)
+    
+    if len(team_df) == 0:
+        raise ValueError(f"Team ID '{target_team_id}'에 해당하는 데이터가 없습니다.")
+    
+    return build_inference_sequence(team_df)
 
