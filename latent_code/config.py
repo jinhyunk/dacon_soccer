@@ -7,7 +7,8 @@ import torch
 # 경로 설정
 # =========================
 TRAIN_PATH = "../data/train.csv"
-TEST_META_PATH = "../data/temporal_test.csv"
+TEST_META_PATH = "../data/temporal_test.csv"          # 검증용 (train에서 분리)
+SUBMIT_META_PATH = "../data/basic/base_test.csv"      # 제출용
 SAMPLE_SUB_PATH = "../data/sample_submission.csv"
 MODEL_DIR = "../data/cvae_models"
 MODEL_PATH = "../data/cvae_models/cvae.pth"
@@ -17,7 +18,7 @@ SUBMIT_PATH = "../data/cvae_submit.csv"
 # 하이퍼파라미터
 # =========================
 BATCH_SIZE = 64
-EPOCHS = 50
+EPOCHS = 30
 LR = 1e-3
 
 # CVAE 파라미터
