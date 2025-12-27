@@ -1,0 +1,404 @@
+import os
+import glob
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
+
+# ==========================================
+# 0. Configuration
+# ==========================================
+class Config:
+    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # Pre-train 설정 (Phase 학습)
+    PRETRAIN_EPOCHS = 15     # Phase 패턴 학습은 금방 수렴함
+    PRETRAIN_BATCH = 512     # 배치 키워서 안정적 학습
+    PRETRAIN_LR = 0.001
+    
+    # Fine-tune 설정 (전체 학습)
+    FINETUNE_EPOCHS = 50
+    FINETUNE_BATCH = 256
+    FINETUNE_LR = 0.001
+    
+    NUM_WORKERS = 0 # 멈춤 현상 방지용
+    
+    MAX_X = 105.0
+    MAX_Y = 68.0
+    MAX_TIME = 5700.0
+    EOS_VALUE = -1.0
+    
+    # 임베딩 & 모델 파라미터 (ContextAwareHierarchicalLSTM 기준)
+    NUM_ACTIONS = 33
+    MAX_PHASE_LEN_EMBED = 30
+    ACTION_EMB_DIM = 4
+    LEN_EMB_DIM = 4
+    
+    INPUT_SIZE = 5
+    PHASE_HIDDEN = 64
+    EPISODE_HIDDEN = 256
+    DROPOUT = 0.3
+    
+    TRAIN_DIR = './data/train'
+    VAL_DIR = './data/val'
+    WEIGHT_DIR = './weight'
+
+ACTION_TO_IDX = {
+    'Aerial Clearance': 0, 'Block': 1, 'Carry': 2, 'Catch': 3, 'Clearance': 4,
+    'Cross': 5, 'Deflection': 6, 'Duel': 7, 'Error': 8, 'Foul': 9,
+    'Foul_Throw': 10, 'Goal': 11, 'Goal Kick': 12, 'Handball_Foul': 13,
+    'Hit': 14, 'Interception': 15, 'Intervention': 16, 'Offside': 17,
+    'Out': 18, 'Own Goal': 19, 'Parry': 20, 'Pass': 21, 'Pass_Corner': 22,
+    'Pass_Freekick': 23, 'Penalty Kick': 24, 'Recovery': 25, 'Shot': 26,
+    'Shot_Corner': 27, 'Shot_Freekick': 28, 'Tackle': 29, 'Take-On': 30,
+    'Throw-In': 31, 'Other': 32
+}
+
+# ==========================================
+# 1. Loss & Model
+# ==========================================
+class RealDistanceLoss(nn.Module):
+    def __init__(self, max_x=105.0, max_y=68.0):
+        super(RealDistanceLoss, self).__init__()
+        self.max_x = max_x
+        self.max_y = max_y
+        self.epsilon = 1e-6
+
+    def forward(self, pred, target):
+        diff_x = (pred[:, 0] - target[:, 0]) * self.max_x
+        diff_y = (pred[:, 1] - target[:, 1]) * self.max_y
+        distance = torch.sqrt(diff_x**2 + diff_y**2 + self.epsilon)
+        return distance.mean()
+
+class ContextAwareHierarchicalLSTM(nn.Module):
+    def __init__(self, input_size=5, phase_hidden=64, episode_hidden=256, output_size=2, dropout=0.3,
+                 num_actions=33, max_phase_len=30, action_emb_dim=4, len_emb_dim=4):
+        super(ContextAwareHierarchicalLSTM, self).__init__()
+        
+        self.action_embedding = nn.Embedding(num_actions, action_emb_dim)
+        self.length_embedding = nn.Embedding(max_phase_len, len_emb_dim)
+        
+        self.phase_input_dim = input_size + action_emb_dim + len_emb_dim
+        self.phase_lstm = nn.LSTM(self.phase_input_dim, phase_hidden, num_layers=1, batch_first=True)
+        
+        self.episode_lstm = nn.LSTM(phase_hidden, episode_hidden, num_layers=2, batch_first=True, dropout=dropout)
+        
+        self.regressor = nn.Sequential(
+            nn.Linear(episode_hidden, episode_hidden // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(episode_hidden // 2, output_size)
+        )
+
+    def forward(self, padded_phases, phase_lengths, episode_lengths, start_action_ids, phase_len_ids):
+        # 1. Context Embedding
+        action_emb = self.action_embedding(start_action_ids)
+        len_emb = self.length_embedding(phase_len_ids)
+        context_vector = torch.cat([action_emb, len_emb], dim=1)
+        
+        seq_len = padded_phases.size(1)
+        context_expanded = context_vector.unsqueeze(1).expand(-1, seq_len, -1)
+        phase_inputs = torch.cat([padded_phases, context_expanded], dim=2)
+        
+        # 2. Phase LSTM
+        packed_phases = pack_padded_sequence(phase_inputs, phase_lengths.cpu(), batch_first=True, enforce_sorted=False)
+        _, (phase_h_n, _) = self.phase_lstm(packed_phases)
+        phase_embeddings = phase_h_n[-1] 
+        
+        # 3. Episode LSTM
+        phases_per_episode = torch.split(phase_embeddings, episode_lengths.tolist())
+        padded_episodes = pad_sequence(phases_per_episode, batch_first=True, padding_value=0)
+        
+        packed_episodes = pack_padded_sequence(padded_episodes, episode_lengths.cpu(), batch_first=True, enforce_sorted=False)
+        _, (episode_h_n, _) = self.episode_lstm(packed_episodes)
+        
+        # 4. Prediction
+        return self.regressor(episode_h_n[-1])
+
+# ==========================================
+# 2. Datasets
+# ==========================================
+
+# [Dataset 1] Pre-training용 (Phase 단위 Flat)
+class PhasePretrainDataset(Dataset):
+    def __init__(self, data_dir):
+        self.file_paths = glob.glob(os.path.join(data_dir, '*.csv'))
+        self.action_map = ACTION_TO_IDX
+        self.all_phases = []
+
+        print(f"🔄 [Pre-train] Loading Phase Data (Fixing Leakage)...")
+        for fpath in tqdm(self.file_paths):
+            try:
+                df = pd.read_csv(fpath)
+                if len(df) < 2: continue
+                if 'phase' not in df.columns:
+                     df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
+                
+                # 정규화
+                df['start_x'] /= Config.MAX_X
+                df['start_y'] /= Config.MAX_Y
+                df['end_x'] /= Config.MAX_X
+                df['end_y'] /= Config.MAX_Y
+                df['time_seconds'] /= Config.MAX_TIME
+                
+                features = df[['start_x', 'start_y', 'end_x', 'end_y', 'time_seconds']].values
+                
+                for _, group in df.groupby('phase', sort=False):
+                    # [중요] 길이가 1인 Phase는 "다음"을 예측할 수 없으므로 제외
+                    if len(group) < 2: continue
+                    
+                    phase_data = features[group.index]
+                    
+                    # -----------------------------------------------------------
+                    # 🚨 [Leakage Fix] 입력(Input)과 정답(Target) 분리
+                    # -----------------------------------------------------------
+                    # Input: 마지막 시점을 제외한 모든 데이터 (0 ~ T-1)
+                    input_data = phase_data[:-1] 
+                    
+                    # Target: 마지막 시점의 종료 좌표 (T)
+                    target = phase_data[-1, 2:4]
+                    
+                    # Context 정보
+                    start_act = self.action_map.get(group.iloc[0]['type_name'], 32)
+                    
+                    # Length Embedding용 길이도 Input 길이에 맞춰야 함
+                    len_idx = min(len(input_data), Config.MAX_PHASE_LEN_EMBED - 1)
+                    
+                    self.all_phases.append({
+                        'data': torch.FloatTensor(input_data),
+                        'start_act': start_act,
+                        'len_id': len_idx,
+                        'target': torch.FloatTensor(target)
+                    })
+            except: continue
+            
+    def __len__(self): return len(self.all_phases)
+    def __getitem__(self, idx):
+        item = self.all_phases[idx]
+        return item['data'], item['start_act'], item['len_id'], item['target']
+    
+def pretrain_collate_fn(batch):
+    data, start_act, len_id, target = zip(*batch)
+    padded_data = pad_sequence(data, batch_first=True, padding_value=0)
+    lengths = torch.LongTensor([len(x) for x in data])
+    
+    start_act = torch.LongTensor(start_act)
+    len_id = torch.LongTensor(len_id)
+    target = torch.stack(target)
+    
+    return padded_data, lengths, start_act, len_id, target
+
+# [Dataset 2] Fine-tuning용 (기존 Hierarchical)
+class SoccerHierarchicalDataset(Dataset):
+    def __init__(self, data_dir):
+        self.file_paths = glob.glob(os.path.join(data_dir, '*.csv'))
+        self.action_map = ACTION_TO_IDX
+    
+    def __len__(self): return len(self.file_paths)
+    
+    def __getitem__(self, idx):
+        try:
+            df = pd.read_csv(self.file_paths[idx])
+            if len(df) < 2: return None
+            if 'phase' not in df.columns:
+                 df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
+
+            sx = df['start_x'].values / Config.MAX_X
+            sy = df['start_y'].values / Config.MAX_Y
+            ex = df['end_x'].values / Config.MAX_X
+            ey = df['end_y'].values / Config.MAX_Y
+            t  = df['time_seconds'].values / Config.MAX_TIME
+            
+            features = np.stack([sx, sy, ex, ey, t], axis=1)
+            target = features[-1, 2:4]
+            input_features = features[:-1]
+            input_df = df.iloc[:-1].copy()
+            
+            phases_data, start_actions, phase_lens = [], [], []
+            
+            for _, group in input_df.groupby('phase', sort=False):
+                p_feats = input_features[group.index]
+                eos = np.full((1, 5), Config.EOS_VALUE)
+                phases_data.append(torch.FloatTensor(np.vstack([p_feats, eos])))
+                
+                # Context
+                start_actions.append(self.action_map.get(group.iloc[0]['type_name'], 32))
+                phase_lens.append(min(len(group), Config.MAX_PHASE_LEN_EMBED - 1))
+                
+            if not phases_data: return None
+            return (phases_data, torch.FloatTensor(target), start_actions, phase_lens)
+        except: return None
+
+def hierarchical_collate_fn(batch):
+    batch = [x for x in batch if x is not None]
+    if not batch: return (None,)*6
+    
+    b_phases, b_targets, b_acts, b_lens = zip(*batch)
+    
+    all_phases, all_acts, all_lens_ids, ep_lens = [], [], [], []
+    for i in range(len(b_phases)):
+        all_phases.extend(b_phases[i])
+        all_acts.extend(b_acts[i])
+        all_lens_ids.extend(b_lens[i])
+        ep_lens.append(len(b_phases[i]))
+        
+    pad_phases = pad_sequence(all_phases, batch_first=True, padding_value=0)
+    phase_lengths = torch.LongTensor([len(p) for p in all_phases])
+    episode_lengths = torch.LongTensor(ep_lens)
+    targets = torch.stack(b_targets)
+    start_action_ids = torch.LongTensor(all_acts)
+    phase_len_ids = torch.LongTensor(all_lens_ids)
+    
+    return pad_phases, phase_lengths, episode_lengths, targets, start_action_ids, phase_len_ids
+
+# ==========================================
+# 3. Execution Functions
+# ==========================================
+
+def run_pretraining(model, train_loader):
+    print("\n🚀 [Step 1] Starting Pre-training (Phase Encoder)...")
+    
+    # 임시 Head (Hidden 64 -> Coord 2)
+    temp_head = nn.Linear(Config.PHASE_HIDDEN, 2).to(Config.DEVICE)
+    
+    # Phase LSTM과 Embedding만 학습
+    optimizer = optim.Adam(
+        list(model.phase_lstm.parameters()) + 
+        list(model.action_embedding.parameters()) + 
+        list(model.length_embedding.parameters()) + 
+        list(temp_head.parameters()),
+        lr=Config.PRETRAIN_LR
+    )
+    
+    # [중요] 미터 단위 Loss 사용
+    criterion = RealDistanceLoss(max_x=Config.MAX_X, max_y=Config.MAX_Y)
+    
+    model.train()
+    temp_head.train()
+    
+    for epoch in range(Config.PRETRAIN_EPOCHS):
+        total_loss = 0
+        for batch in tqdm(train_loader, desc=f"Pretrain Epoch {epoch+1}/{Config.PRETRAIN_EPOCHS}"):
+            # phases, lengths, start_act, len_id, target
+            phases, lengths, start_act, len_id, target = [b.to(Config.DEVICE) for b in batch]
+            
+            optimizer.zero_grad()
+            
+            # --- Manual Phase Forward ---
+            # 1. Embeddings
+            act_emb = model.action_embedding(start_act)
+            l_emb = model.length_embedding(len_id)
+            context = torch.cat([act_emb, l_emb], dim=1)
+            
+            # 2. Expand & Concat
+            seq_len = phases.size(1)
+            context_ex = context.unsqueeze(1).expand(-1, seq_len, -1)
+            inputs = torch.cat([phases, context_ex], dim=2)
+            
+            # 3. LSTM
+            packed = pack_padded_sequence(inputs, lengths.cpu(), batch_first=True, enforce_sorted=False)
+            _, (hn, _) = model.phase_lstm(packed)
+            phase_vec = hn[-1]
+            
+            preds = temp_head(phase_vec)
+            # ---------------------------
+            
+            loss = criterion(preds, target)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+            
+        print(f"   Pretrain Loss: {total_loss / len(train_loader):.4f} m")
+    
+    print("✅ Pre-training Completed.")
+    return model
+
+def run_finetuning(model, train_loader, val_loader):
+    print("\n❄️ [Step 2] Freezing Phase Encoder & Starting Fine-tuning...")
+    
+    # 1. Freeze
+    for name, param in model.named_parameters():
+        if 'phase' in name or 'embedding' in name:
+            param.requires_grad = False
+            
+    # 2. Optimizer
+    optimizer = optim.Adam(model.parameters(), lr=Config.FINETUNE_LR)
+    
+    criterion = RealDistanceLoss(max_x=Config.MAX_X, max_y=Config.MAX_Y)
+    
+    best_dist = float('inf')
+    
+    for epoch in range(Config.FINETUNE_EPOCHS):
+        # Train
+        model.train()
+        train_loss = 0
+        for batch in tqdm(train_loader, desc=f"Finetune Epoch {epoch+1}/{Config.FINETUNE_EPOCHS}"):
+            # phases, p_lens, ep_lens, targets, acts, l_ids
+            batch = [b.to(Config.DEVICE) for b in batch]
+            if batch[0] is None: continue
+            
+            optimizer.zero_grad()
+            # Forward (Index 0,1,2, 4,5 -> targets(3) 제외)
+            # collate 순서: pad_phases, p_lens, ep_lens, targets, start_acts, l_ids
+            # model forward: padded_phases, phase_lengths, episode_lengths, start_action_ids, phase_len_ids
+            preds = model(batch[0], batch[1], batch[2], batch[4], batch[5])
+            
+            loss = criterion(preds, batch[3]) # targets
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
+            
+        # Validation
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for batch in val_loader:
+                batch = [b.to(Config.DEVICE) for b in batch]
+                if batch[0] is None: continue
+                preds = model(batch[0], batch[1], batch[2], batch[4], batch[5])
+                loss = criterion(preds, batch[3])
+                val_loss += loss.item()
+        
+        avg_train = train_loss / len(train_loader)
+        avg_val = val_loss / len(val_loader)
+        
+        print(f"   Train Loss: {avg_train:.4f}m | Val Loss: {avg_val:.4f}m")
+        
+        # if avg_val < best_dist:
+        #     best_dist = avg_val
+        #     os.makedirs(Config.WEIGHT_DIR, exist_ok=True)
+        #     save_path = f"{Config.WEIGHT_DIR}/best_context_pretrain_model.pth"
+        #     torch.save(model.state_dict(), save_path)
+        #     print(f"   💾 Best Model Saved ({best_dist:.4f}m)")
+
+if __name__ == "__main__":
+    print(f"✅ Device: {Config.DEVICE}")
+    
+    # 1. Dataset Load
+    pre_ds = PhasePretrainDataset(Config.TRAIN_DIR)
+    pre_loader = DataLoader(pre_ds, batch_size=Config.PRETRAIN_BATCH, 
+                            shuffle=True, collate_fn=pretrain_collate_fn, num_workers=Config.NUM_WORKERS)
+    
+    train_ds = SoccerHierarchicalDataset(Config.TRAIN_DIR)
+    val_ds = SoccerHierarchicalDataset(Config.VAL_DIR)
+    
+    train_loader = DataLoader(train_ds, batch_size=Config.FINETUNE_BATCH, 
+                              shuffle=True, collate_fn=hierarchical_collate_fn, num_workers=Config.NUM_WORKERS)
+    val_loader = DataLoader(val_ds, batch_size=Config.FINETUNE_BATCH, 
+                            shuffle=False, collate_fn=hierarchical_collate_fn, num_workers=Config.NUM_WORKERS)
+    
+    # 2. Model Init
+    model = ContextAwareHierarchicalLSTM(
+        input_size=Config.INPUT_SIZE,
+        phase_hidden=Config.PHASE_HIDDEN,
+        episode_hidden=Config.EPISODE_HIDDEN,
+        dropout=Config.DROPOUT
+    ).to(Config.DEVICE)
+    
+    # 3. Run
+    model = run_pretraining(model, pre_loader)
+    run_finetuning(model, train_loader, val_loader)
