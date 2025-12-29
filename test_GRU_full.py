@@ -405,9 +405,13 @@ def run_training():
                 
                 val_dist_metric += dist
                 count += 1
-                
-        avg_val_loss = val_loss_sum / count
-        avg_val_dist = val_dist_metric / count
+        if count > 0:
+            avg_val_loss = val_loss_sum / count
+            avg_val_dist = val_dist_metric / count
+        else:
+            print("⚠️ Warning: Validation set yielded no valid batches.")
+            avg_val_loss = 0.0
+            avg_val_dist = float('inf')        
         
         print(f"   Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
         print(f"   >>> Val Metric (Distance): {avg_val_dist:.4f}m") # 14~18m 나오는 그 지표
