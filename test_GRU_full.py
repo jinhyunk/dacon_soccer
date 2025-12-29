@@ -207,71 +207,140 @@ class SoccerDataset(Dataset):
     def __len__(self): return len(self.file_paths)
     
     def __getitem__(self, idx):
-        try:
-            df = pd.read_csv(self.file_paths[idx])
-            if len(df) < 2: return None
-            
-            # Target
-            target_ex = df['end_x'].values[-1] / Config.MAX_X
-            target_ey = df['end_y'].values[-1] / Config.MAX_Y
-            target = np.array([target_ex, target_ey])
-            
-            # Phase Grouping
-            if 'phase' not in df.columns:
-                 df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
+        # [디버깅] Try-Except 제거 -> 에러가 나면 멈춰서 원인을 보여줌
+        fpath = self.file_paths[idx]
+        
+        # 1. 파일 읽기
+        df = pd.read_csv(fpath)
+        if len(df) < 2: return None
+        
+        # 2. Target 추출
+        target_ex = df['end_x'].values[-1] / Config.MAX_X
+        target_ey = df['end_y'].values[-1] / Config.MAX_Y
+        target = np.array([target_ex, target_ey])
+        
+        # 3. Phase Grouping (여기서 team_id 컬럼이 없으면 에러 발생)
+        if 'phase' not in df.columns:
+             if 'team_id' not in df.columns:
+                 raise ValueError(f"❌ Error in {fpath}: 'team_id' column missing!")
+             df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
 
-            # Features
-            sx = df['start_x'].values / Config.MAX_X
-            sy = df['start_y'].values / Config.MAX_Y
-            ex = df['end_x'].values / Config.MAX_X
-            ey = df['end_y'].values / Config.MAX_Y
-            t  = df['time_seconds'].values / Config.MAX_TIME
-            dx, dy = ex - sx, ey - sy
+        # 4. Features 추출
+        sx = df['start_x'].values / Config.MAX_X
+        sy = df['start_y'].values / Config.MAX_Y
+        ex = df['end_x'].values / Config.MAX_X
+        ey = df['end_y'].values / Config.MAX_Y
+        t  = df['time_seconds'].values / Config.MAX_TIME
+        dx, dy = ex - sx, ey - sy
+        
+        features = np.stack([sx, sy, dx, dy, t], axis=1)
+        input_features = features[:-1]
+        input_df = df.iloc[:-1].copy()
+        
+        phases_data, start_actions, phase_lens_raw = [], [], []
+        phase_end_coords = []
+        phase_teams = [] 
+        
+        # 5. Phase Loop
+        for _, group in input_df.groupby('phase', sort=False):
+            p_feats = input_features[group.index]
+            eos = np.full((1, 5), Config.EOS_VALUE)
+            phases_data.append(torch.FloatTensor(np.vstack([p_feats, eos])))
             
-            features = np.stack([sx, sy, dx, dy, t], axis=1)
-            input_features = features[:-1]
-            input_df = df.iloc[:-1].copy()
+            # Action & Length
+            act_name = group.iloc[0]['type_name']
+            start_actions.append(self.action_map.get(act_name, DEFAULT_ACTION_IDX))
+            phase_lens_raw.append(len(group))
             
-            phases_data, start_actions, phase_lens_raw = [], [], []
-            phase_end_coords = []
-            phase_teams = [] # [NEW] Team ID List
+            # Team ID (전역 변수 TEAM_TO_IDX 사용)
+            raw_team = group.iloc[0]['team_id']
+            team_idx = TEAM_TO_IDX.get(raw_team, 0)
+            phase_teams.append(team_idx)
             
-            for _, group in input_df.groupby('phase', sort=False):
-                p_feats = input_features[group.index]
-                eos = np.full((1, 5), Config.EOS_VALUE)
-                phases_data.append(torch.FloatTensor(np.vstack([p_feats, eos])))
-                
-                # Context Info
-                act_name = group.iloc[0]['type_name']
-                start_actions.append(self.action_map.get(act_name, DEFAULT_ACTION_IDX))
-                
-                # [NEW] Raw Length 저장 (함수형 입력용)
-                phase_lens_raw.append(len(group))
-                
-                # [NEW] Team ID Mapping
-                raw_team = group.iloc[0]['team_id']
-                team_idx = TEAM_TO_IDX.get(raw_team, 0) # 매핑 없으면 0
-                phase_teams.append(team_idx)
-                
-                last_x = group.iloc[-1]['end_x'] / Config.MAX_X
-                last_y = group.iloc[-1]['end_y'] / Config.MAX_Y
-                phase_end_coords.append([last_x, last_y])
+            last_x = group.iloc[-1]['end_x'] / Config.MAX_X
+            last_y = group.iloc[-1]['end_y'] / Config.MAX_Y
+            phase_end_coords.append([last_x, last_y])
+        
+        target_start_x = sx[-1]
+        target_start_y = sy[-1]
+        if len(phase_end_coords) > 0:
+            phase_end_coords[-1] = [target_start_x, target_start_y]
+        else:
+             phase_end_coords.append([target_start_x, target_start_y])
+             
+        if not phases_data: return None
+        
+        return (phases_data, torch.FloatTensor(target), start_actions, 
+                torch.FloatTensor(phase_lens_raw), 
+                torch.FloatTensor(phase_end_coords),
+                torch.LongTensor(phase_teams))
+    
+    # def __getitem__(self, idx):
+    #     try:
+    #         df = pd.read_csv(self.file_paths[idx])
+    #         if len(df) < 2: return None
             
-            # Residual 연결을 위한 마지막 위치 (Target Start)
-            target_start_x = sx[-1]
-            target_start_y = sy[-1]
-            if len(phase_end_coords) > 0:
-                phase_end_coords[-1] = [target_start_x, target_start_y]
-            else:
-                 phase_end_coords.append([target_start_x, target_start_y])
+    #         # Target
+    #         target_ex = df['end_x'].values[-1] / Config.MAX_X
+    #         target_ey = df['end_y'].values[-1] / Config.MAX_Y
+    #         target = np.array([target_ex, target_ey])
+            
+    #         # Phase Grouping
+    #         if 'phase' not in df.columns:
+    #              df['phase'] = (df['team_id'] != df['team_id'].shift(1)).fillna(0).cumsum()
+
+    #         # Features
+    #         sx = df['start_x'].values / Config.MAX_X
+    #         sy = df['start_y'].values / Config.MAX_Y
+    #         ex = df['end_x'].values / Config.MAX_X
+    #         ey = df['end_y'].values / Config.MAX_Y
+    #         t  = df['time_seconds'].values / Config.MAX_TIME
+    #         dx, dy = ex - sx, ey - sy
+            
+    #         features = np.stack([sx, sy, dx, dy, t], axis=1)
+    #         input_features = features[:-1]
+    #         input_df = df.iloc[:-1].copy()
+            
+    #         phases_data, start_actions, phase_lens_raw = [], [], []
+    #         phase_end_coords = []
+    #         phase_teams = [] # [NEW] Team ID List
+            
+    #         for _, group in input_df.groupby('phase', sort=False):
+    #             p_feats = input_features[group.index]
+    #             eos = np.full((1, 5), Config.EOS_VALUE)
+    #             phases_data.append(torch.FloatTensor(np.vstack([p_feats, eos])))
+                
+    #             # Context Info
+    #             act_name = group.iloc[0]['type_name']
+    #             start_actions.append(self.action_map.get(act_name, DEFAULT_ACTION_IDX))
+                
+    #             # [NEW] Raw Length 저장 (함수형 입력용)
+    #             phase_lens_raw.append(len(group))
+                
+    #             # [NEW] Team ID Mapping
+    #             raw_team = group.iloc[0]['team_id']
+    #             team_idx = TEAM_TO_IDX.get(raw_team, 0) # 매핑 없으면 0
+    #             phase_teams.append(team_idx)
+                
+    #             last_x = group.iloc[-1]['end_x'] / Config.MAX_X
+    #             last_y = group.iloc[-1]['end_y'] / Config.MAX_Y
+    #             phase_end_coords.append([last_x, last_y])
+            
+    #         # Residual 연결을 위한 마지막 위치 (Target Start)
+    #         target_start_x = sx[-1]
+    #         target_start_y = sy[-1]
+    #         if len(phase_end_coords) > 0:
+    #             phase_end_coords[-1] = [target_start_x, target_start_y]
+    #         else:
+    #              phase_end_coords.append([target_start_x, target_start_y])
                  
-            if not phases_data: return None
+    #         if not phases_data: return None
             
-            return (phases_data, torch.FloatTensor(target), start_actions, 
-                    torch.FloatTensor(phase_lens_raw), # 스칼라 길이 반환
-                    torch.FloatTensor(phase_end_coords),
-                    torch.LongTensor(phase_teams))     # 팀 ID 반환
-        except: return None
+    #         return (phases_data, torch.FloatTensor(target), start_actions, 
+    #                 torch.FloatTensor(phase_lens_raw), # 스칼라 길이 반환
+    #                 torch.FloatTensor(phase_end_coords),
+    #                 torch.LongTensor(phase_teams))     # 팀 ID 반환
+    #     except: return None
 
 def collate_fn(batch):
     batch = [x for x in batch if x is not None]
@@ -405,13 +474,9 @@ def run_training():
                 
                 val_dist_metric += dist
                 count += 1
-        if count > 0:
-            avg_val_loss = val_loss_sum / count
-            avg_val_dist = val_dist_metric / count
-        else:
-            print("⚠️ Warning: Validation set yielded no valid batches.")
-            avg_val_loss = 0.0
-            avg_val_dist = float('inf')        
+                
+        avg_val_loss = val_loss_sum / count
+        avg_val_dist = val_dist_metric / count
         
         print(f"   Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
         print(f"   >>> Val Metric (Distance): {avg_val_dist:.4f}m") # 14~18m 나오는 그 지표
