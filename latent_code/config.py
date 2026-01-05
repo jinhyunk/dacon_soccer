@@ -32,9 +32,9 @@ NUM_SAMPLES = 20        # 추론 시 샘플링 개수
 # - lstm: LSTM 기반 (기본값, 순차적 의존성 학습에 적합)
 # - gru: GRU 기반 (LSTM보다 가볍고 빠름)
 # - transformer: Transformer 기반 (전역 의존성 학습, 긴 시퀀스에 효과적)
-# ENCODER_TYPE = "gru"
+ENCODER_TYPE = "gru"
 # ENCODER_TYPE = "transformer"
-ENCODER_TYPE = "lstm"
+# ENCODER_TYPE = "lstm"
 
 # Transformer 인코더 전용 파라미터
 TRANSFORMER_NUM_LAYERS = 4    # Transformer encoder layer 개수
@@ -57,8 +57,8 @@ MAX_SEQ_LEN = 512       # 최대 시퀀스 길이
 # - team: game_episode 내에서 team_id 단위로 시퀀스 생성
 #         예측할 좌표와 동일한 team_id의 데이터만 사용
 # SEQUENCE_MODE = "episode"
-# SEQUENCE_MODE = "phase"
-SEQUENCE_MODE = "team"
+SEQUENCE_MODE = "phase"
+# SEQUENCE_MODE = "team"
 
 # =========================
 # Device 설정
