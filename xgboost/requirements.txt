@@ -1,0 +1,7 @@
+# XGBoost 모델 의존성
+xgboost>=2.0.0
+numpy>=1.21.0
+pandas>=1.3.0
+scikit-learn>=1.0.0
+tqdm>=4.62.0
+
