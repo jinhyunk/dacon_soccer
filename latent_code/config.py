@@ -57,8 +57,8 @@ MAX_SEQ_LEN = 512       # 최대 시퀀스 길이
 # - team: game_episode 내에서 team_id 단위로 시퀀스 생성
 #         예측할 좌표와 동일한 team_id의 데이터만 사용
 # SEQUENCE_MODE = "episode"
-# SEQUENCE_MODE = "phase"
-SEQUENCE_MODE = "team"
+SEQUENCE_MODE = "phase"
+# SEQUENCE_MODE = "team"
 
 # =========================
 # Device 설정
